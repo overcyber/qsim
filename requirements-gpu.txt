@@ -1,0 +1,7 @@
+# Dependencias opcionais de GPU/aceleracao (instalar na maquina com as placas)
+# Todas as GPUs (3090, 4060 Ti, P40) - CUDA 12.x:
+cupy-cuda12x
+# Apenas GPUs Volta+ (3090 CC 8.6, 4060 Ti CC 8.9; a P40 Pascal 6.1 NAO suporta):
+cuquantum-python-cu12
+# Acelerador opcional de CPU (kernels 1q paralelos; ative com QSIM_USE_NUMBA=1):
+numba

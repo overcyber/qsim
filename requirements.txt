@@ -1,0 +1,11 @@
+numpy>=1.26
+nats-py>=2.7
+msgpack>=1.0.8
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.4
+pydantic-settings>=2.2
+prometheus-client>=0.20
+pytest>=8.0
+qiskit>=1.0
+qiskit-aer>=0.14

@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QSim - Console de Pesquisa</title>
+<style>
+  :root {
+    --bg: #10131c; --panel: #171b28; --panel-2: #1d2233; --line: #2a3149;
+    --text: #d8dcea; --muted: #7b83a0;
+    --amp0: #62d4c3; --amp1: #e8a04c; --err: #e06070; --ok: #62d47a;
+    --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+    --font-body: "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-body);
+         font-size: 14px; min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 28px;
+           border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-family: var(--font-mono); font-size: 18px; letter-spacing: 2px; }
+  header .ket { color: var(--amp0); }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #conn { margin-left: auto; font-family: var(--font-mono); font-size: 12px; }
+  #conn.on { color: var(--ok); } #conn.off { color: var(--err); }
+  #token { width: 190px; }
+
+  main { display: grid; grid-template-columns: 480px 1fr; gap: 20px;
+         padding: 20px 28px; max-width: 1600px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .panel h2 { font-family: var(--font-mono); font-size: 12px; letter-spacing: 1.5px;
+              text-transform: uppercase; color: var(--muted);
+              padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .panel .body { padding: 16px; }
+  .stack { display: flex; flex-direction: column; gap: 20px; }
+
+  label { display: block; color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+  input, textarea, select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 9px; font-family: var(--font-mono); font-size: 13px; }
+  textarea { min-height: 170px; resize: vertical; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--amp0); outline-offset: -1px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  button { padding: 8px 12px; background: var(--amp0); color: #08221e; font-weight: 600;
+           border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.ghost { background: var(--panel-2); color: var(--text);
+                 border: 1px solid var(--line); font-weight: 400; }
+  button.small { padding: 3px 8px; font-size: 11px; }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button { background: var(--panel-2); color: var(--muted);
+                 border: 1px solid var(--line); font-weight: 400; }
+  .tabs button.active { color: var(--amp0); border-color: var(--amp0); }
+  .tabpane { display: none; } .tabpane.active { display: block; }
+
+  /* Editor visual */
+  .palette { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+  .palette button { background: var(--panel-2); color: var(--text);
+                    border: 1px solid var(--line); font-family: var(--font-mono);
+                    font-weight: 400; padding: 5px 9px; }
+  .palette button.sel { border-color: var(--amp1); color: var(--amp1); }
+  #grid { overflow-x: auto; }
+  #grid table { border-collapse: collapse; font-family: var(--font-mono); }
+  #grid td { border: 1px solid var(--line); width: 40px; height: 34px;
+             text-align: center; cursor: pointer; font-size: 12px; position: relative; }
+  #grid td.wire::after { content: ""; position: absolute; left: 0; right: 0;
+             top: 50%; height: 1px; background: var(--line); z-index: 0; }
+  #grid td span { position: relative; z-index: 1; }
+  #grid td:hover { background: var(--panel-2); }
+  #grid .qlabel { border: none; color: var(--muted); cursor: default;
+                  width: 46px; font-size: 11px; }
+  .g-1q { color: var(--amp0); } .g-ctrl { color: var(--amp1); }
+  .g-meas { color: var(--err); }
+  .pendmsg { color: var(--amp1); font-size: 11.5px; min-height: 16px;
+             font-family: var(--font-mono); margin-top: 4px; }
+
+  table.data { width: 100%; border-collapse: collapse;
+               font-family: var(--font-mono); font-size: 12px; }
+  table.data th, table.data td { text-align: left; padding: 7px 10px;
+               border-bottom: 1px solid var(--line); }
+  table.data th { color: var(--muted); font-weight: 500;
+               text-transform: uppercase; font-size: 11px; }
+  tr.selectable { cursor: pointer; }
+  tr.selectable:hover { background: var(--panel-2); }
+  .st-queued { color: var(--amp1); } .st-done { color: var(--ok); }
+  .st-error, .st-timeout, .st-rejected { color: var(--err); }
+  .st-cancelled { color: var(--muted); }
+
+  #histogram { padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+  .bar-row { display: grid; grid-template-columns: 150px 1fr 70px;
+             align-items: center; gap: 10px;
+             font-family: var(--font-mono); font-size: 12px; }
+  .bar-track { background: var(--panel-2); border-radius: 3px; height: 18px;
+               overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+  .bar-b { position: absolute; top: 9px; height: 9px; }
+  .empty { color: var(--muted); font-family: var(--font-mono);
+           font-size: 12px; padding: 16px; }
+  .bloch-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
+  .bloch { text-align: center; font-family: var(--font-mono); font-size: 10px;
+           color: var(--muted); }
+  .ent-row { display: grid; grid-template-columns: 60px 1fr 60px; gap: 10px;
+             align-items: center; font-family: var(--font-mono); font-size: 12px;
+             padding: 2px 16px; }
+  .exports { padding: 8px 16px 14px; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>QSIM <span class="ket">|&psi;&rangle;</span></h1>
+  <span class="sub">console de pesquisa &middot; ate 31 qubits &middot; NATS + MessagePack</span>
+  <input id="token" type="password" placeholder="token de acesso (Bearer)">
+  <span id="conn" class="off">WS: desconectado</span>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Circuito</h2>
+    <div class="body">
+      <div class="tabs">
+        <button id="tab-editor" class="active">Editor</button>
+        <button id="tab-json">JSON</button>
+        <button id="tab-qasm">QASM</button>
+      </div>
+
+      <div id="pane-editor" class="tabpane active">
+        <div class="palette" id="palette"></div>
+        <div id="grid"></div>
+        <div class="pendmsg" id="pendmsg"></div>
+        <div class="row" style="margin-top:6px">
+          <button class="ghost small" id="addcol">+ coluna</button>
+          <button class="ghost small" id="clear">limpar circuito</button>
+        </div>
+      </div>
+
+      <div id="pane-json" class="tabpane">
+        <label for="ops">Operacoes (JSON)</label>
+        <textarea id="ops">[
+  {"gate": "h", "targets": [0]},
+  {"gate": "cx", "targets": [0, 1]}
+]</textarea>
+      </div>
+
+      <div id="pane-qasm" class="tabpane">
+        <label for="qasm">OpenQASM 2/3</label>
+        <textarea id="qasm">OPENQASM 3;
+qubit[2] q;
+h q[0];
+cx q[0], q[1];</textarea>
+      </div>
+
+      <div class="row3">
+        <div><label for="qubits">Qubits</label>
+          <input id="qubits" type="number" min="1" max="31" value="2"></div>
+        <div><label for="shots">Shots</label>
+          <input id="shots" type="number" min="1" max="1000000" value="1024"></div>
+        <div><label for="priority">Prioridade</label>
+          <input id="priority" type="number" min="0" max="9" value="5"></div>
+      </div>
+      <div class="row3">
+        <div><label for="precision">Precisao</label>
+          <select id="precision">
+            <option value="complex64">complex64</option>
+            <option value="complex128" selected>complex128</option>
+          </select></div>
+        <div><label for="verify">Verificacao</label>
+          <select id="verify">
+            <option value="false" selected>desativada</option>
+            <option value="true">c64 vs c128</option>
+          </select></div>
+        <div><label for="seed">Seed</label>
+          <input id="seed" type="number" placeholder="aleatoria"></div>
+      </div>
+      <div class="row3">
+        <div><label for="bloch">Bloch</label>
+          <select id="bloch"><option value="false">nao</option>
+            <option value="true" selected>sim</option></select></div>
+        <div><label for="ent">Emaranhamento</label>
+          <select id="ent"><option value="false">nao</option>
+            <option value="true" selected>sim</option></select></div>
+        <div><label for="obs">Observaveis</label>
+          <input id="obs" type="text" placeholder="z0, ZZ, XX..."></div>
+      </div>
+      <div class="row3">
+        <div><label for="backend">Motor</label>
+          <select id="backend">
+            <option value="auto" selected>auto</option>
+            <option value="aer">aer (C++)</option>
+            <option value="aer-gpu">aer-gpu</option>
+            <option value="numpy">numpy (referencia)</option>
+            <option value="cupy">cupy (GPU)</option>
+            <option value="custatevec">custatevec</option>
+          </select></div>
+        <div><label for="fuse">Fusao 1q</label>
+          <select id="fuse"><option value="true" selected>sim</option>
+            <option value="false">nao</option></select></div>
+        <div><label for="parallel">Trajetorias paralelas</label>
+          <select id="parallel"><option value="true" selected>sim</option>
+            <option value="false">nao</option></select></div>
+      </div>
+      <div class="row3">
+        <div><label for="noise-dep">Ruido depol.</label>
+          <input id="noise-dep" type="number" min="0" max="1" step="0.001" value="0"></div>
+        <div><label for="noise-ro">Erro leitura</label>
+          <input id="noise-ro" type="number" min="0" max="1" step="0.001" value="0"></div>
+        <div><label for="label">Rotulo</label>
+          <input id="label" type="text" value="experimento-1"></div>
+      </div>
+      <button id="submit" style="width:100%; margin-top:14px">Executar simulacao</button>
+      <p class="hint">Editor: selecione uma porta e clique na grade. Portas de 2-3 qubits:
+      clique controle(s) e alvo na mesma coluna. Clique numa celula ocupada para remover.
+      Observaveis: z&lt;idx&gt; ou string Pauli IXYZ do tamanho do registro (ex.: ZZ para 2 qubits).</p>
+    </div>
+  </section>
+
+  <div class="stack">
+    <section class="panel">
+      <h2>Jobs</h2>
+      <table class="data">
+        <thead><tr><th>ID</th><th>Rotulo</th><th>Q</th><th>Shots</th>
+          <th>Status</th><th>Tempo</th><th></th></tr></thead>
+        <tbody id="jobs"><tr><td colspan="7" class="empty">Nenhum job</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2 id="hist-title">Resultado</h2>
+      <div id="histogram"><div class="empty">Selecione um job concluido</div></div>
+      <div class="bloch-row" id="blochrow"></div>
+      <div id="entrows"></div>
+      <div class="exports" id="exports"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Comparador (A vs B)</h2>
+      <div class="body">
+        <div class="row">
+          <select id="cmpA"></select>
+          <select id="cmpB"></select>
+        </div>
+      </div>
+      <div id="cmp-out" style="padding: 0 16px 16px"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const state = { jobs: {}, selected: null };
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------------
+// Autenticacao
+// ---------------------------------------------------------------------
+$("token").value = localStorage.getItem("qsim_token") || "";
+$("token").onchange = () => localStorage.setItem("qsim_token", $("token").value);
+function authHeaders(extra) {
+  const h = extra || {};
+  const t = $("token").value.trim();
+  if (t) h["Authorization"] = "Bearer " + t;
+  return h;
+}
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = authHeaders(opts.headers);
+  const res = await fetch(path, opts);
+  if (res.status === 401) alert("Token invalido ou ausente (campo no topo)");
+  return res;
+}
+
+// ---------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------
+function connectWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const t = $("token").value.trim();
+  const ws = new WebSocket(proto + "://" + location.host + "/ws" +
+                           (t ? "?token=" + encodeURIComponent(t) : ""));
+  const badge = $("conn");
+  ws.onopen = () => { badge.textContent = "WS: conectado"; badge.className = "on"; };
+  ws.onclose = () => { badge.textContent = "WS: desconectado";
+                       badge.className = "off"; setTimeout(connectWS, 2000); };
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "job_update" && msg.data && msg.data.job_id) {
+      state.jobs[msg.data.job_id] = Object.assign(
+        state.jobs[msg.data.job_id] || {}, msg.data);
+      renderJobs();
+      if (state.selected === msg.data.job_id) renderResult(state.jobs[state.selected]);
+    }
+  };
+  setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 25000);
+}
+
+// ---------------------------------------------------------------------
+// Editor visual
+// ---------------------------------------------------------------------
+const GATES = [
+  {name: "h"}, {name: "x"}, {name: "y"}, {name: "z"}, {name: "s"}, {name: "t"},
+  {name: "sx"},
+  {name: "rx", params: 1}, {name: "ry", params: 1}, {name: "rz", params: 1},
+  {name: "p", params: 1},
+  {name: "cx", qubits: 2, ctrl: 1}, {name: "cz", qubits: 2, ctrl: 1},
+  {name: "swap", qubits: 2}, {name: "cp", qubits: 2, ctrl: 1, params: 1},
+  {name: "ccx", qubits: 3, ctrl: 2},
+  {name: "measure", meas: true},
+];
+const editor = { cols: 10, ops: [], sel: null, pending: [] };
+
+function paletteInit() {
+  const pal = $("palette");
+  GATES.forEach((g, i) => {
+    const b = document.createElement("button");
+    b.textContent = g.name.toUpperCase();
+    b.onclick = () => {
+      editor.sel = (editor.sel === i) ? null : i;
+      editor.pending = [];
+      paletteRender(); pendMsg();
+    };
+    b.dataset.i = i;
+    pal.appendChild(b);
+  });
+  paletteRender();
+}
+function paletteRender() {
+  document.querySelectorAll("#palette button").forEach(b =>
+    b.classList.toggle("sel", Number(b.dataset.i) === editor.sel));
+}
+function pendMsg() {
+  const g = editor.sel !== null ? GATES[editor.sel] : null;
+  if (!g) { $("pendmsg").textContent = ""; return; }
+  const need = (g.qubits || 1) - editor.pending.length;
+  const kind = g.ctrl && editor.pending.length < g.ctrl ? "controle" : "alvo";
+  $("pendmsg").textContent = g.qubits > 1
+    ? `${g.name.toUpperCase()}: clique o ${kind} (${need} clique(s) restante(s), mesma coluna)`
+    : `${g.name.toUpperCase()}: clique na celula de destino`;
+}
+function nQubits() { return Math.max(1, Math.min(31, parseInt($("qubits").value, 10) || 1)); }
+
+function gridRender() {
+  const n = nQubits();
+  editor.ops = editor.ops.filter(o => o.targets.every(t => t < n) && o.col < editor.cols);
+  const cell = {};
+  editor.ops.forEach((o, oi) => {
+    o.targets.forEach((q, ti) => {
+      const g = GATES.find(x => x.name === o.gate) || {};
+      const isCtrl = g.ctrl && ti < g.ctrl;
+      cell[o.col + ":" + q] = { op: oi, label: labelFor(o, ti, isCtrl),
+                                cls: o.gate === "measure" ? "g-meas"
+                                     : (isCtrl ? "g-ctrl" : "g-1q") };
+    });
+  });
+  let html = "<table>";
+  for (let q = 0; q < n; q++) {
+    html += `<tr><td class="qlabel">q${q}</td>`;
+    for (let c = 0; c < editor.cols; c++) {
+      const info = cell[c + ":" + q];
+      html += `<td class="wire" data-c="${c}" data-q="${q}">` +
+              (info ? `<span class="${info.cls}">${info.label}</span>` : "") + "</td>";
+    }
+    html += "</tr>";
+  }
+  html += "</table>";
+  $("grid").innerHTML = html;
+  $("grid").querySelectorAll("td[data-c]").forEach(td => td.onclick = () =>
+    cellClick(parseInt(td.dataset.c, 10), parseInt(td.dataset.q, 10)));
+}
+function labelFor(op, ti, isCtrl) {
+  if (op.gate === "measure") return "M";
+  if (isCtrl) return "\u25CF";
+  if (op.gate === "swap") return "\u00D7";
+  if (op.gate === "cx" && ti === 1) return "\u2295";
+  const base = op.gate.toUpperCase();
+  return op.params ? base + "(" + op.params[0].toFixed(2) + ")" : base;
+}
+function cellClick(c, q) {
+  const occupied = editor.ops.findIndex(o => o.col === c && o.targets.includes(q));
+  if (editor.sel === null) {
+    if (occupied >= 0) { editor.ops.splice(occupied, 1); gridRender(); }
+    return;
+  }
+  if (occupied >= 0) { editor.ops.splice(occupied, 1); }
+  const g = GATES[editor.sel];
+  const need = g.qubits || 1;
+  if (editor.pending.length && editor.pending[0].c !== c) editor.pending = [];
+  if (editor.pending.some(p => p.q === q)) return;
+  editor.pending.push({c, q});
+  if (editor.pending.length < need) { pendMsg(); gridRender(); return; }
+  const targets = editor.pending.map(p => p.q);
+  const op = { col: c, targets };
+  if (g.meas) { op.gate = "measure"; }
+  else {
+    op.gate = g.name;
+    if (g.params) {
+      const raw = prompt(`Parametro de ${g.name.toUpperCase()} em radianos ` +
+                         `(aceita pi, pi/2, 2*pi):`, "pi/2");
+      if (raw === null) { editor.pending = []; pendMsg(); return; }
+      const v = parsePi(raw);
+      if (v === null) { alert("Parametro invalido"); editor.pending = []; return; }
+      op.params = [v];
+    }
+  }
+  editor.ops.push(op);
+  editor.pending = [];
+  pendMsg(); gridRender();
+}
+function parsePi(raw) {
+  if (!/^[0-9pi+\-*/(). ]+$/.test(raw)) return null;
+  try {
+    const v = Function('"use strict"; const pi = Math.PI; return (' + raw + ')')();
+    return (typeof v === "number" && isFinite(v)) ? v : null;
+  } catch { return null; }
+}
+function editorToOperations() {
+  const sorted = [...editor.ops].sort((a, b) => a.col - b.col);
+  return sorted.map(o => {
+    if (o.gate === "measure") return { op: "measure", targets: o.targets };
+    const out = { gate: o.gate, targets: o.targets };
+    if (o.params) out.params = o.params;
+    return out;
+  });
+}
+$("addcol").onclick = () => { editor.cols += 4; gridRender(); };
+$("clear").onclick = () => { editor.ops = []; gridRender(); };
+$("qubits").onchange = gridRender;
+
+// ---------------------------------------------------------------------
+// Abas
+// ---------------------------------------------------------------------
+let activeTab = "editor";
+["editor", "json", "qasm"].forEach(t => {
+  $("tab-" + t).onclick = () => {
+    activeTab = t;
+    ["editor", "json", "qasm"].forEach(x => {
+      $("tab-" + x).classList.toggle("active", x === t);
+      $("pane-" + x).classList.toggle("active", x === t);
+    });
+  };
+});
+
+// ---------------------------------------------------------------------
+// Submissao
+// ---------------------------------------------------------------------
+$("submit").onclick = async () => {
+  const btn = $("submit");
+  btn.disabled = true;
+  try {
+    const payload = {
+      shots: parseInt($("shots").value, 10),
+      precision: $("precision").value,
+      verify: $("verify").value === "true",
+      return_bloch: $("bloch").value === "true",
+      return_entanglement: $("ent").value === "true",
+      priority: parseInt($("priority").value, 10),
+      backend: $("backend").value,
+      fuse: $("fuse").value === "true",
+      parallel: $("parallel").value === "true",
+      label: $("label").value || null,
+    };
+    const seed = $("seed").value.trim();
+    if (seed) payload.seed = parseInt(seed, 10);
+    const obs = $("obs").value.trim();
+    if (obs) payload.observables = obs.split(",").map(s => s.trim()).filter(Boolean);
+    const dep = parseFloat($("noise-dep").value) || 0;
+    const ro = parseFloat($("noise-ro").value) || 0;
+    if (dep > 0 || ro > 0) {
+      payload.noise = {};
+      if (dep > 0) payload.noise.depolarizing = dep;
+      if (ro > 0) payload.noise.readout_error = ro;
+    }
+    if (activeTab === "qasm") {
+      payload.qasm = $("qasm").value;
+    } else {
+      payload.num_qubits = nQubits();
+      payload.operations = activeTab === "editor"
+        ? editorToOperations()
+        : JSON.parse($("ops").value);
+      if (!payload.operations.length) { alert("Circuito vazio"); return; }
+    }
+    const res = await api("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert("Erro na submissao: " + JSON.stringify(err.detail));
+    }
+  } catch (e) {
+    alert("Entrada invalida: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ---------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------
+async function loadJobs() {
+  try {
+    const res = await api("/api/history?limit=100");
+    if (res.ok) for (const j of await res.json())
+      state.jobs[j.job_id] = Object.assign(j, state.jobs[j.job_id] || {});
+    renderJobs();
+  } catch {}
+}
+function renderJobs() {
+  const tbody = $("jobs");
+  const list = Object.values(state.jobs)
+    .sort((a, b) => (b.submitted_at || 0) - (a.submitted_at || 0)).slice(0, 40);
+  if (!list.length) return;
+  tbody.innerHTML = list.map(j => {
+    const t = j.result && j.result.elapsed_ms !== undefined
+      ? j.result.elapsed_ms.toFixed(1) + " ms" : "-";
+    const cancel = (j.status === "queued")
+      ? `<button class="ghost small" data-cancel="${j.job_id}">cancelar</button>` : "";
+    return `<tr class="selectable" data-id="${j.job_id}">
+      <td>${j.job_id}</td><td>${j.label || "-"}</td>
+      <td>${j.num_qubits ?? "-"}</td><td>${j.shots ?? "-"}</td>
+      <td class="st-${j.status}">${j.status}</td><td>${t}</td><td>${cancel}</td></tr>`;
+  }).join("");
+  tbody.querySelectorAll("tr").forEach(tr => tr.onclick = () => {
+    state.selected = tr.dataset.id;
+    renderResult(state.jobs[state.selected]);
+  });
+  tbody.querySelectorAll("button[data-cancel]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    await api("/api/jobs/" + b.dataset.cancel + "/cancel", { method: "POST" });
+  });
+  cmpFill();
+}
+
+// ---------------------------------------------------------------------
+// Resultado: histograma + verificacao + bloch + emaranhamento
+// ---------------------------------------------------------------------
+function renderResult(job) {
+  $("hist-title").textContent = "Resultado - " + (job.label || job.job_id);
+  const el = $("histogram");
+  $("blochrow").innerHTML = ""; $("entrows").innerHTML = ""; $("exports").innerHTML = "";
+  if (!job.result || !job.result.counts) {
+    el.innerHTML = `<div class="empty">Sem resultado (${job.status})` +
+      (job.error ? ": " + job.error : "") + "</div>";
+    return;
+  }
+  const r = job.result;
+  const meta = r.metadata || {};
+  let head = "";
+  if (meta.verification && meta.verification.state_fidelity !== undefined) {
+    const v = meta.verification;
+    head += `<div class="bar-row" style="grid-template-columns:1fr">
+      <span class="${v.passed ? "st-done" : "st-error"}">verificacao ${v.compared}:
+      fidelidade ${v.state_fidelity.toFixed(9)}, TVD ${v.total_variation_distance.toExponential(2)}
+      - ${v.passed ? "APROVADA" : "REPROVADA"}</span></div>`;
+  }
+  if (r.expectation) {
+    head += `<div class="bar-row" style="grid-template-columns:1fr">
+      <span style="color:var(--amp0)">observaveis: ` +
+      Object.entries(r.expectation).map(([k, v]) =>
+        `&lang;${k}&rang; = ${v.toFixed(6)}`).join("  |  ") + "</span></div>";
+  }
+  const entries = Object.entries(r.counts).sort((a, b) => b[1] - a[1]).slice(0, 32);
+  el.innerHTML = head + entries.map(([bits, cnt]) => {
+    const pct = 100 * cnt / r.shots;
+    const ones = (bits.match(/1/g) || []).length;
+    const mix = Math.round(100 * ones / bits.length);
+    return `<div class="bar-row"><span>|${bits}&rangle;</span>
+      <div class="bar-track"><div class="bar-fill"
+        style="width:${pct}%;background:color-mix(in srgb, var(--amp1) ${mix}%, var(--amp0))"></div></div>
+      <span>${pct.toFixed(1)}%</span></div>`;
+  }).join("");
+
+  if (r.bloch) {
+    $("blochrow").innerHTML = Object.entries(r.bloch).map(([q, [x, y, z]]) => {
+      const R = 30, cx = 38, cy = 38;
+      const px = cx + x * R, py = cy - z * R;
+      const rlen = Math.sqrt(x * x + y * y + z * z);
+      return `<div class="bloch">
+        <svg width="76" height="76">
+          <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--line)"/>
+          <ellipse cx="${cx}" cy="${cy}" rx="${R}" ry="${R * 0.3}"
+                   fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
+          <line x1="${cx}" y1="${cy}" x2="${px.toFixed(1)}" y2="${py.toFixed(1)}"
+                stroke="var(--amp0)" stroke-width="1.5"/>
+          <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5"
+                  fill="${Math.abs(y) > 0.05 ? "var(--amp1)" : "var(--amp0)"}"/>
+        </svg><br>q${q} &middot; r=${rlen.toFixed(2)} y=${y.toFixed(2)}</div>`;
+    }).join("");
+  }
+  if (r.entanglement) {
+    $("entrows").innerHTML =
+      `<div class="ent-row" style="color:var(--muted)"><span>qubit</span>
+       <span>entropia de emaranhamento (1 vs resto)</span><span>bits</span></div>` +
+      Object.entries(r.entanglement).map(([q, s]) =>
+        `<div class="ent-row"><span>q${q}</span>
+         <div class="bar-track"><div class="bar-fill"
+           style="width:${(100 * s).toFixed(1)}%;background:var(--amp1)"></div></div>
+         <span>${s.toFixed(3)}</span></div>`).join("") +
+      `<div style="height:10px"></div>`;
+  }
+  ["json", "csv", "latex"].forEach(fmt => {
+    const b = document.createElement("button");
+    b.className = "ghost small";
+    b.textContent = "exportar " + fmt;
+    b.onclick = async () => {
+      const res = await api(`/api/jobs/${job.job_id}/export?fmt=${fmt}`);
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `qsim-${job.job_id}.${fmt === "latex" ? "tex" : fmt}`;
+      a.click();
+    };
+    $("exports").appendChild(b);
+  });
+}
+
+// ---------------------------------------------------------------------
+// Comparador A vs B (ex.: teorico exato vs empirico com ruido)
+// ---------------------------------------------------------------------
+function cmpFill() {
+  const done = Object.values(state.jobs).filter(j => j.result && j.result.counts);
+  const opts = '<option value="">selecione...</option>' + done.map(j =>
+    `<option value="${j.job_id}">${j.label || j.job_id}</option>`).join("");
+  const a = $("cmpA").value, b = $("cmpB").value;
+  $("cmpA").innerHTML = opts; $("cmpB").innerHTML = opts;
+  $("cmpA").value = a; $("cmpB").value = b;
+}
+$("cmpA").onchange = cmpRender; $("cmpB").onchange = cmpRender;
+function cmpRender() {
+  const A = state.jobs[$("cmpA").value], B = state.jobs[$("cmpB").value];
+  const out = $("cmp-out");
+  if (!A || !B || !A.result || !B.result) { out.innerHTML = ""; return; }
+  const pa = {}, pb = {};
+  for (const [k, v] of Object.entries(A.result.counts)) pa[k] = v / A.result.shots;
+  for (const [k, v] of Object.entries(B.result.counts)) pb[k] = v / B.result.shots;
+  const keys = [...new Set([...Object.keys(pa), ...Object.keys(pb)])].sort();
+  let tvd = 0;
+  keys.forEach(k => tvd += Math.abs((pa[k] || 0) - (pb[k] || 0)));
+  tvd /= 2;
+  out.innerHTML = `<div class="bar-row" style="grid-template-columns:1fr">
+    <span style="color:var(--amp0)">TVD(A, B) = ${tvd.toFixed(5)}
+    &nbsp;|&nbsp; <span style="color:var(--amp0)">A</span> em cima,
+    <span style="color:var(--amp1)">B</span> embaixo</span></div>` +
+    keys.slice(0, 24).map(k => {
+      const wa = 100 * (pa[k] || 0), wb = 100 * (pb[k] || 0);
+      return `<div class="bar-row"><span>|${k}&rangle;</span>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${wa}%;background:var(--amp0);height:9px"></div>
+          <div class="bar-fill bar-b" style="width:${wb}%;background:var(--amp1)"></div>
+        </div>
+        <span>${wa.toFixed(1)}/${wb.toFixed(1)}</span></div>`;
+    }).join("");
+}
+
+// ---------------------------------------------------------------------
+paletteInit();
+gridRender();
+connectWS();
+loadJobs();
+</script>
+</body>
+</html>

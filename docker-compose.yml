@@ -1,0 +1,183 @@
+# QSim - Orquestracao dos microservicos
+#
+# CPU (dev):        docker compose up --build
+# Escalar engines:  docker compose up --build --scale engine=4
+# Com as 3 GPUs:    docker compose --profile gpu up --build
+# NATS com contas:  docker compose -f docker-compose.yml -f docker-compose.secure.yml up
+
+x-engine-common: &engine-common
+  build:
+    context: .
+    dockerfile: services/engine/Dockerfile
+  environment: &engine-env
+    QSIM_NATS_URL: nats://nats:4222
+    QSIM_LOG_DIR: /var/log/qsim
+  volumes:
+    - qsim-logs:/var/log/qsim
+  depends_on:
+    nats:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
+
+x-engine-gpu: &engine-gpu
+  build:
+    context: .
+    dockerfile: services/engine/Dockerfile.cuda
+  environment:
+    <<: *engine-env
+  volumes:
+    - qsim-logs:/var/log/qsim
+  depends_on:
+    nats:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+  profiles: ["gpu"]
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: services/scheduler/Dockerfile
+    environment:
+      QSIM_NATS_URL: nats://nats:4222
+      QSIM_LOG_DIR: /var/log/qsim
+    volumes:
+      - qsim-logs:/var/log/qsim
+    depends_on:
+      nats:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Worker CPU (classes small + noisy; trajetorias paralelas nos nucleos)
+  engine:
+    <<: *engine-common
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # Um worker por GPU (perfil gpu). Classes conforme a capacidade da placa.
+  engine-gpu0:
+    <<: *engine-gpu
+    environment:
+      <<: *engine-env
+      CUDA_VISIBLE_DEVICES: "0"        # RTX 3090 24GB
+      QSIM_ENGINE_CLASSES: "small,medium,large,noisy"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  engine-gpu1:
+    <<: *engine-gpu
+    environment:
+      <<: *engine-env
+      CUDA_VISIBLE_DEVICES: "0"
+      QSIM_ENGINE_CLASSES: "small,medium,noisy"   # 4060 Ti 16GB: ate 30 qubits
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+
+  engine-gpu2:
+    <<: *engine-gpu
+    environment:
+      <<: *engine-env
+      CUDA_VISIBLE_DEVICES: "0"
+      QSIM_ENGINE_CLASSES: "small,medium,large,noisy"  # Tesla P40 24GB (CuPy)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["2"]
+              capabilities: [gpu]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    environment:
+      QSIM_NATS_URL: nats://nats:4222
+      QSIM_LOG_DIR: /var/log/qsim
+      QSIM_DB_PATH: /data/qsim.db
+      QSIM_ADMIN_TOKEN: ${QSIM_ADMIN_TOKEN:-}
+    volumes:
+      - qsim-logs:/var/log/qsim
+      - qsim-data:/data
+    ports:
+      - "10000:10000"
+    depends_on:
+      nats:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:latest
+    command: ["-varz", "-connz", "-subz", "-jsz=all", "http://nats:8222"]
+    depends_on:
+      - nats
+
+  # Telemetria das GPUs (utilizacao, VRAM, temperatura, potencia)
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.1-ubuntu22.04
+    profiles: ["gpu"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-qsim}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  qsim-logs:
+  qsim-data:

@@ -1,0 +1,21 @@
+# Override de seguranca: NATS com contas e permissoes por servico.
+# docker compose -f docker-compose.yml -f docker-compose.secure.yml up
+services:
+  nats:
+    command: ["-c", "/etc/nats/nats-secure.conf"]
+    volumes:
+      - ./deploy/nats-secure.conf:/etc/nats/nats-secure.conf:ro
+    environment:
+      QSIM_PASS_GATEWAY: ${QSIM_PASS_GATEWAY:?defina QSIM_PASS_GATEWAY}
+      QSIM_PASS_SCHEDULER: ${QSIM_PASS_SCHEDULER:?defina QSIM_PASS_SCHEDULER}
+      QSIM_PASS_ENGINE: ${QSIM_PASS_ENGINE:?defina QSIM_PASS_ENGINE}
+      QSIM_PASS_SDK: ${QSIM_PASS_SDK:?defina QSIM_PASS_SDK}
+  gateway:
+    environment:
+      QSIM_NATS_URL: nats://gateway:${QSIM_PASS_GATEWAY}@nats:4222
+  scheduler:
+    environment:
+      QSIM_NATS_URL: nats://scheduler:${QSIM_PASS_SCHEDULER}@nats:4222
+  engine:
+    environment:
+      QSIM_NATS_URL: nats://engine:${QSIM_PASS_ENGINE}@nats:4222

@@ -1,0 +1,18 @@
+# Engine com GPU (CuPy). CUDA 12.x: compativel com RTX 3090, RTX 4060 Ti
+# e Tesla P40 (Pascal CC 6.1 nao e suportada em CUDA 13+; manter 12.x
+# enquanto a P40 estiver no chassi).
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt cupy-cuda12x cuquantum-python-cu12 numba
+
+COPY shared ./shared
+COPY services/__init__.py ./services/__init__.py
+COPY services/engine ./services/engine
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python3", "-m", "services.engine.worker"]

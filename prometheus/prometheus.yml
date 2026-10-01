@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: qsim-engine
+    static_configs:
+      - targets: ["engine:9101", "engine-gpu0:9101", "engine-gpu1:9101", "engine-gpu2:9101"]
+  - job_name: qsim-gateway
+    static_configs:
+      - targets: ["gateway:9102"]
+  - job_name: qsim-scheduler
+    static_configs:
+      - targets: ["scheduler:9103"]
+  - job_name: nats
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nats-exporter:7777"]
+  - job_name: gpu
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]

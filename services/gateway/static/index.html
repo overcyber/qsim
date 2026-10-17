@@ -114,7 +114,7 @@
 <body>
 <header>
   <h1>QSIM <span class="ket">|&psi;&rangle;</span></h1>
-  <span class="sub">console de pesquisa &middot; ate 31 qubits &middot; NATS + MessagePack</span>
+  <span class="sub" id="subtitle">console de pesquisa &middot; NATS + MessagePack</span>
   <input id="token" type="password" placeholder="token de acesso (Bearer)">
   <span id="conn" class="off">WS: desconectado</span>
 </header>
@@ -259,7 +259,10 @@ const $ = (id) => document.getElementById(id);
 // Autenticacao
 // ---------------------------------------------------------------------
 $("token").value = localStorage.getItem("qsim_token") || "";
-$("token").onchange = () => localStorage.setItem("qsim_token", $("token").value);
+$("token").onchange = () => {
+  localStorage.setItem("qsim_token", $("token").value);
+  loadJobs();  // recarrega com o novo token (o WS reconecta sozinho)
+};
 function authHeaders(extra) {
   const h = extra || {};
   const t = $("token").value.trim();
@@ -269,9 +272,9 @@ function authHeaders(extra) {
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = authHeaders(opts.headers);
-  const res = await fetch(path, opts);
-  if (res.status === 401) alert("Token invalido ou ausente (campo no topo)");
-  return res;
+  // 401 em chamadas de fundo (ex.: lista inicial de jobs) nao gera alerta:
+  // quem dispara acao explicita trata o 401 na hora.
+  return await fetch(path, opts);
 }
 
 // ---------------------------------------------------------------------
@@ -341,7 +344,7 @@ function pendMsg() {
     ? `${g.name.toUpperCase()}: clique o ${kind} (${need} clique(s) restante(s), mesma coluna)`
     : `${g.name.toUpperCase()}: clique na celula de destino`;
 }
-function nQubits() { return Math.max(1, Math.min(31, parseInt($("qubits").value, 10) || 1)); }
+function nQubits() { return Math.max(1, Math.min(parseInt($("qubits").max || "31", 10), parseInt($("qubits").value, 10) || 1)); }
 
 function gridRender() {
   const n = nQubits();
@@ -488,6 +491,11 @@ $("submit").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (res.status === 401) {
+      alert("Token invalido ou ausente: digite o token completo no campo " +
+            "no topo da pagina e aguarde ~2s (WS reconecta).");
+      return;
+    }
     if (!res.ok) {
       const err = await res.json();
       alert("Erro na submissao: " + JSON.stringify(err.detail));
@@ -662,6 +670,17 @@ paletteInit();
 gridRender();
 connectWS();
 loadJobs();
+// Teto de qubits vem do servidor (QSIM_MAX_QUBITS): ajusta o campo e o titulo.
+fetch("/api/health").then(r => r.json()).then(h => {
+  if (h && h.max_qubits) {
+    $("qubits").max = h.max_qubits;
+    $("subtitle").textContent = "console de pesquisa \u00b7 at\u00e9 " +
+      h.max_qubits + " qubits \u00b7 NATS + MessagePack" +
+      (h.auth_enabled && !$("token").value.trim()
+        ? " \u00b7 DIGITE O TOKEN NO TOPO" : "");
+    gridRender();
+  }
+}).catch(() => {});
 </script>
 </body>
 </html>

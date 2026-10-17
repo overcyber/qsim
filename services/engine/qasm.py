@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 import re
 
+from shared.settings import settings
+
 MAX_SOURCE_LEN = 200_000
 _PARAM_SAFE = re.compile(r"^[0-9pi+\-*/(). eE]+$")
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -89,8 +91,10 @@ def parse(source: str) -> dict:
                 num_qubits, reg_name = int(g1), g2
             else:
                 reg_name, num_qubits = g1, int(g2)
-            if not 1 <= num_qubits <= 31:
-                raise QasmError("Registro deve ter entre 1 e 31 qubits")
+            if not 1 <= num_qubits <= settings.max_qubits:
+                raise QasmError(
+                    f"Registro deve ter entre 1 e {settings.max_qubits} qubits"
+                )
             continue
 
         if reg_name is None:

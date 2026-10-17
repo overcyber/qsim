@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-MAX_QUBITS = 31
+from shared.settings import settings
+
+# Teto operacional configuravel por ambiente (QSIM_MAX_QUBITS): permite
+# rebaixar o limite de producao (ex.: 20) sem tocar no teto do motor.
+MAX_QUBITS = settings.max_qubits
 MAX_SHOTS = 1_000_000
 MAX_OPERATIONS = 20_000
 MAX_PARAMS = 8

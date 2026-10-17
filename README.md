@@ -15,6 +15,23 @@ administração na porta 10000, monitoramento Prometheus/Grafana.
 Console: http://localhost:10000 — Grafana: http://localhost:3000 (dashboard
 "QSim - Visão Geral") — Prometheus: http://localhost:9090.
 
+Configuração local no `.env` (lido automaticamente pelo compose; não é
+versionado — veja `.env.example` abaixo):
+
+    QSIM_MAX_QUBITS=20    # teto de qubits aceito no gateway/validação/QASM (1-31)
+    QSIM_ADMIN_TOKEN=...  # token do console; vazio = sem autenticação (dev)
+
+## Console web
+
+![Console web do QSim com bateria de testes reais](docs/console-testes.png)
+
+Captura do console durante a bateria `TESTE-REAL-*` (login por token,
+lista de jobs com status, histograma do estado de Bell com 100 mil shots
+em 50/50, observáveis ⟨ZZ⟩=⟨XX⟩=1, verificação cruzada c128/c64 APROVADA
+e entropia de emaranhamento de 1 bit por qubit). A validação completa
+(teoria vs simulador: interferência, rotação exata, Bell, GHZ-20 na GPU
+Tesla P40 e ruído depolarizante) está descrita em docs/PESQUISA.md.
+
 ## Serviços
 
     services/engine      worker de simulação (NumPy/CuPy, c64/c128, classes por capacidade)

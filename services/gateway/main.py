@@ -152,7 +152,9 @@ class Operation(BaseModel):
 
 class CircuitRequest(BaseModel):
     model_config = {"extra": "forbid"}
-    num_qubits: int | None = Field(default=None, ge=1, le=31)
+    num_qubits: int | None = Field(
+        default=None, ge=1, le=settings.max_qubits
+    )
     shots: int = Field(default=1024, ge=1, le=1_000_000)
     seed: int | None = None
     precision: Literal["complex64", "complex128"] = "complex128"
@@ -483,6 +485,7 @@ async def health() -> dict:
         "nats": bus.nc is not None and bus.nc.is_connected,
         "jobs_tracked": len(jobs),
         "auth_enabled": bool(settings.admin_token),
+        "max_qubits": settings.max_qubits,
     }
 
 
@@ -511,14 +514,17 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "services.gateway.main:app",
+        app,
         host=settings.admin_host,
         port=settings.admin_port,
         log_level=settings.log_level.lower(),

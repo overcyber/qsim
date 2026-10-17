@@ -6,6 +6,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared ./shared
 COPY services/__init__.py ./services/__init__.py
+# O gateway importa services.engine.qasm (parser OpenQASM); copiar o modulo.
+COPY services/engine/__init__.py ./services/engine/__init__.py
+COPY services/engine/qasm.py ./services/engine/qasm.py
 COPY services/gateway ./services/gateway
 
 ENV PYTHONUNBUFFERED=1

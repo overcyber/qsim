@@ -1,0 +1,8 @@
+# Segredos locais — nunca versionar
+.env
+
+# Artefatos locais de teste
+docker-compose.test-override.yml
+
+# Cache de ferramentas de analise
+.mimosa/

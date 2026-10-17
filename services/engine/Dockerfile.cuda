@@ -8,7 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt cupy-cuda12x cuquantum-python-cu12 numba
+# [ctk]: headers CUDA em runtime, obrigatorios desde o CuPy 14 para compilar
+# os kernels JIT (sem isso qualquer operacao elementwise falha).
+RUN pip3 install --no-cache-dir -r requirements.txt \
+    "cupy-cuda12x[ctk]" cuquantum-python-cu12 numba
 
 COPY shared ./shared
 COPY services/__init__.py ./services/__init__.py

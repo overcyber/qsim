@@ -10,11 +10,14 @@ Suportado:
   - Outros:    barrier ...;  reset q[0];
 
 Parametros aceitam expressoes com pi (ex.: pi/2, 3*pi/4, -pi), avaliadas
-com whitelist estrita de caracteres — nunca eval de entrada livre.
+por um interpretador AST que so aceita aritmetica basica e a constante
+pi — nunca eval de entrada livre.
 """
 from __future__ import annotations
 
+import ast
 import math
+import operator
 import re
 
 from shared.settings import settings
@@ -23,9 +26,29 @@ MAX_SOURCE_LEN = 200_000
 _PARAM_SAFE = re.compile(r"^[0-9pi+\-*/(). eE]+$")
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 
+_BIN_OPS = {ast.Add: operator.add, ast.Sub: operator.sub,
+            ast.Mult: operator.mul, ast.Div: operator.truediv}
+
 
 class QasmError(ValueError):
     pass
+
+
+def _eval_node(node: ast.AST) -> float:
+    """Avalia a expressao restrita a numeros, pi e + - * / unarios/binarios."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return float(node.value)
+    if isinstance(node, ast.Name) and node.id == "pi":
+        return math.pi
+    if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+        return _BIN_OPS[type(node.op)](_eval_node(node.left),
+                                       _eval_node(node.right))
+    if isinstance(node, ast.UnaryOp) and isinstance(
+            node.op, (ast.UAdd, ast.USub)):
+        value = _eval_node(node.operand)
+        return value if isinstance(node.op, ast.UAdd) else -value
+    raise QasmError(f"Construcao nao permitida em parametro: "
+                    f"{type(node).__name__}")
 
 
 def _eval_param(expr: str) -> float:
@@ -38,9 +61,10 @@ def _eval_param(expr: str) -> float:
     if re.search(r"[pi]", expr) and re.sub(r"pi", "", expr).strip("0123456789+-*/(). eE"):
         raise QasmError(f"Parametro invalido: '{expr}'")
     try:
-        value = eval(  # noqa: S307 - entrada ja filtrada por whitelist
-            expr, {"__builtins__": {}}, {"pi": math.pi}
-        )
+        tree = ast.parse(expr, mode="eval")
+        value = _eval_node(tree.body)
+    except QasmError as err:
+        raise QasmError(f"Parametro invalido: '{expr}' ({err})")
     except Exception as err:
         raise QasmError(f"Parametro invalido: '{expr}' ({err})")
     f = float(value)

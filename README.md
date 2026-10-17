@@ -70,6 +70,8 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
 
 ## Documentação
 
-    docs/PLANEJAMENTO.md   arquitetura, decisões, fases (1-4 entregues, 5 futura)
-    docs/PESQUISA.md       guia de uso para pesquisa (web, SDK, receitas, exports)
-    requirements-gpu.txt   dependencias opcionais: cupy-cuda12x, cuquantum (Volta+), numba
+    docs/PLANEJAMENTO.md       arquitetura, decisões, fases (1-4 entregues, 5 futura)
+    docs/PESQUISA.md           guia de uso para pesquisa (web, SDK, receitas, exports)
+    docs/PLANO_DE_MELHORIA.md  avaliação profunda, comparativo com outros simuladores
+                               e plano de melhoria em fases (P0-P4) com critérios de aceite
+    requirements-gpu.txt       dependencias opcionais: cupy-cuda12x, cuquantum (Volta+), numba

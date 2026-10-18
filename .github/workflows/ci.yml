@@ -39,6 +39,11 @@ jobs:
         run: PYTHONPATH=. python3 tests/test_trajectories.py
       - name: Canais de ruido e paridade entre motores
         run: PYTHONPATH=. python3 tests/test_noise_channels.py
+      - name: Tema 1 (canarios contra crosstalk)
+        run: |
+          PYTHONPATH=. python3 tests/test_tema1_canario.py
+          PYTHONPATH=. python3 experiments/tema1_canario/piloto_binomial.py --verificar
+          PYTHONPATH=. python3 experiments/tema1_canario/benchmark_sequencial.py --verificar
       - name: Fuzzer (150 iteracoes)
         run: PYTHONPATH=. python3 tests/fuzz.py 150
 

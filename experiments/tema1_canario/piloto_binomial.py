@@ -12,8 +12,10 @@ Esta versao:
      distinta por ponto para nao correlacionar os desvios;
   2. recalcula o poder pela aproximacao normal do piloto e pelo teste
      binomial exato (tamanho real <= alfa);
-  3. verifica empiricamente tamanho e poder com centenas de jobs do QSim
-     de n shots cada, com intervalo de Wilson de 95%;
+  3. verifica empiricamente tamanho e poder com 1000 jobs do QSim de n
+     shots cada por hipotese; reporta o intervalo de Wilson de 95% e usa o
+     de 99,9% como criterio de aprovacao (quatro checagens a 95% falhariam
+     por acaso em cerca de 19% das execucoes);
   4. grava tudo com manifesto de proveniencia em
      resultados/piloto_binomial.json.
 
@@ -170,19 +172,21 @@ def executar(cfg: dict = CONFIG) -> dict:
                 p_hat, _ = p1_qsim_amostrado(theta, k, pf, n, s, cfg["backend"])
                 alarmes += int(round(p_hat * n)) >= c
             lo, hi = wilson(alarmes, emp_cfg["replicas"])
+            lo3, hi3 = wilson(alarmes, emp_cfg["replicas"], z=3.290527)
             rej[rot] = {"alarmes": alarmes, "replicas": emp_cfg["replicas"],
                         "taxa": alarmes / emp_cfg["replicas"],
-                        "ic95_wilson": [lo, hi]}
+                        "ic95_wilson": [lo, hi],
+                        "ic999_wilson": [lo3, hi3]}
         empirico.append({
             "n_canario": n, "theta": theta_e, "limiar_contagem": c,
             "tamanho_teorico": exato["tamanho_real"],
             "poder_teorico": exato["poder"],
             "falso_positivo_empirico": rej["h0"],
             "deteccao_empirica": rej["h1"],
-            "tamanho_dentro_ic": rej["h0"]["ic95_wilson"][0]
-            <= exato["tamanho_real"] <= rej["h0"]["ic95_wilson"][1],
-            "poder_dentro_ic": rej["h1"]["ic95_wilson"][0]
-            <= exato["poder"] <= rej["h1"]["ic95_wilson"][1],
+            "tamanho_dentro_ic999": rej["h0"]["ic999_wilson"][0]
+            <= exato["tamanho_real"] <= rej["h0"]["ic999_wilson"][1],
+            "poder_dentro_ic999": rej["h1"]["ic999_wilson"][0]
+            <= exato["poder"] <= rej["h1"]["ic999_wilson"][1],
         })
 
     return {
@@ -235,8 +239,9 @@ def verificar(ref: dict, novo: dict) -> list[str]:
         if abs(b["z_amostrado_vs_analitico"]) > 5:
             falhas.append(f"theta={a['theta']}: amostra a mais de 5 sigma")
     for e in novo["empirico"]:
-        if not (e["tamanho_dentro_ic"] and e["poder_dentro_ic"]):
-            falhas.append(f"n={e['n_canario']}: teoria fora do IC empirico")
+        if not (e["tamanho_dentro_ic999"] and e["poder_dentro_ic999"]):
+            falhas.append(f"n={e['n_canario']}: teoria fora do IC empirico "
+                          "de 99,9%")
     return falhas
 
 

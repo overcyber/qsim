@@ -51,7 +51,9 @@ def _sha256(caminho: Path) -> str:
 
 
 def manifesto(extra: dict | None = None) -> dict:
-    status = _git("status", "--porcelain")
+    # Arquivos nao rastreados (ex.: resultados recem-gerados) nao alteram o
+    # codigo; so modificacoes em arquivos versionados sujam a arvore.
+    status = _git("status", "--porcelain", "--untracked-files=no")
     m = {
         "gerado_em_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(
             timespec="seconds"),

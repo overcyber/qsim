@@ -73,16 +73,26 @@ class NoiseModel:
 
     @property
     def enabled(self) -> bool:
+        return self.quantum or self.readout_error > 0
+
+    @property
+    def quantum(self) -> bool:
+        """Ha canais atuando sobre o estado quantico (exigem trajetorias ou
+        um motor com canais). Erro de leitura sozinho nao conta: ele e
+        aplicado na amostragem e cabe no caminho exato."""
         return (self.depolarizing > 0 or self.amplitude_damping > 0
-                or self.readout_error > 0 or bool(self.per_gate)
-                or bool(self.per_qubit))
+                or any(v > 0 for spec in self.per_gate.values()
+                       for v in spec.values())
+                or any(v > 0 for spec in self.per_qubit.values()
+                       for v in spec.values()))
 
     def probs_for(self, gate: str, qubit: int) -> tuple[float, float]:
         """(depolarizante, amplitude_damping) efetivos para porta+qubit.
-        Contribuicoes somadas e saturadas em 1.0."""
+        Contribuicoes somadas e saturadas em 1.0. O nome da porta e
+        canonicalizado: cnot e cx recebem o mesmo ruido."""
         dep = self.depolarizing
         damp = self.amplitude_damping
-        g = self.per_gate.get(gate.lower())
+        g = self.per_gate.get(gates.canonical(gate))
         if g:
             dep += g.get("depolarizing", 0.0)
             damp += g.get("amplitude_damping", 0.0)
@@ -110,9 +120,18 @@ class NoiseModel:
             readout_error=_p(d.get("readout_error", 0.0), "readout_error"),
         )
         for gate, spec in (d.get("per_gate") or {}).items():
-            m.per_gate[str(gate).lower()] = {
-                k: _p(v, f"per_gate.{gate}.{k}") for k, v in spec.items()
-            }
+            if not gates.is_known(str(gate)):
+                # antes era ignorado em silencio: ruido "configurado" que
+                # nunca atuava
+                raise ValueError(
+                    f"noise.per_gate: porta desconhecida '{str(gate)[:16]}'"
+                )
+            entry = m.per_gate.setdefault(gates.canonical(str(gate)), {})
+            for k, v in spec.items():
+                # apelido e nome canonico no mesmo JSON se somam
+                entry[k] = min(
+                    entry.get(k, 0.0) + _p(v, f"per_gate.{gate}.{k}"), 1.0
+                )
         for qubit, spec in (d.get("per_qubit") or {}).items():
             m.per_qubit[int(qubit)] = {
                 k: _p(v, f"per_qubit.{qubit}.{k}") for k, v in spec.items()
@@ -421,11 +440,40 @@ class StatevectorSimulator:
             if dep > 0 and self.rng.random() < dep:
                 self.apply_gate(str(self.rng.choice(["x", "y", "z"])), [q])
                 fired = True
-            if damp > 0 and self.rng.random() < damp:
+            if damp > 0 and self.amplitude_damping(q, damp):
                 fired = True
-                if self.measure(q) == 1:
-                    self.apply_gate("x", [q])
         return fired
+
+    def amplitude_damping(self, qubit: int, gamma: float) -> bool:
+        """Desdobramento em saltos quanticos do amplitude damping.
+
+        Kraus: K0 = diag(1, sqrt(1-gamma)) e K1 = sqrt(gamma) |0><1|.
+        O salto (K1) ocorre com probabilidade gamma * P(1); sem salto, o
+        estado evolui por K0 e e renormalizado. A media sobre trajetorias
+        reproduz exatamente o canal: p1 -> (1-gamma) p1 e coerencias
+        multiplicadas por sqrt(1-gamma).
+
+        Retorna True apenas quando ha salto. O ramo sem salto e
+        deterministico (igual em todos os shots sem eventos), por isso nao
+        quebra o reuso de trajetorias do P1.4.
+
+        Correcao: a versao anterior sorteava gamma, fazia uma medicao
+        projetiva e levava o qubit a |0>, o que e um canal de reset: as
+        populacoes coincidiam, mas as coerencias decaiam por (1-gamma) em
+        vez de sqrt(1-gamma).
+        """
+        p1 = self._prob_one(qubit)
+        if p1 <= 0.0:
+            return False
+        moved = self.xp.moveaxis(self._tensor_view(), self.n - 1 - qubit, 0)
+        if self.rng.random() < gamma * p1:
+            moved[0] = moved[1]
+            moved[1] = 0
+            self.state /= math.sqrt(p1)
+            return True
+        moved[1] *= math.sqrt(1.0 - gamma)
+        self.state /= math.sqrt(1.0 - gamma * p1)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -546,8 +594,50 @@ def _trajectory_plan(circuit: dict) -> tuple[list[dict], list[dict], NoiseModel]
     return ops[:split], ops[split:], noise
 
 
+# Tamanho fixo do bloco de shots com seed propria. Cada bloco recebe um
+# filho de numpy.random.SeedSequence(seed), entao o resultado depende so da
+# seed e do numero de shots, nunca do numero de workers nem do modo
+# paralelo/sequencial (requisito de reprodutibilidade entre maquinas).
+TRAJECTORY_BLOCK = 256
+
+
+def _trajectory_blocks(shots: int, seed: int | None) -> list[tuple[int, Any]]:
+    nblocks = math.ceil(shots / TRAJECTORY_BLOCK)
+    children = np.random.SeedSequence(seed).spawn(nblocks)
+    blocks = []
+    remaining = shots
+    for child in children:
+        take = min(TRAJECTORY_BLOCK, remaining)
+        blocks.append((take, child))
+        remaining -= take
+    return blocks
+
+
+def _prefix_state(circuit: dict[str, Any]):
+    """Estado apos o prefixo deterministico (sem aleatoriedade)."""
+    prefix, _, _ = _trajectory_plan(circuit)
+    sim = make_simulator(int(circuit["num_qubits"]), seed=0,
+                         precision=str(circuit.get("precision", "complex128")),
+                         backend=str(circuit.get("backend", "numpy")))
+    for op in prefix:
+        _apply_static(sim, op)
+    return sim.state
+
+
+def _run_trajectory_blocks(circuit: dict[str, Any],
+                           blocks: list[tuple[int, Any]]) -> dict[str, int]:
+    """Executa varios blocos num processo, calculando o prefixo uma vez."""
+    pstate = _prefix_state(circuit)
+    counts: dict[str, int] = {}
+    for take, seed in blocks:
+        sub = _run_trajectory_chunk(circuit, take, seed, prefix_state=pstate)
+        for k, v in sub.items():
+            counts[k] = counts.get(k, 0) + v
+    return counts
+
+
 def _run_trajectory_chunk(circuit: dict[str, Any], shots: int,
-                          seed: int) -> dict[str, int]:
+                          seed: Any, prefix_state=None) -> dict[str, int]:
     n = int(circuit["num_qubits"])
     precision = str(circuit.get("precision", "complex128"))
     backend = str(circuit.get("backend", "numpy"))
@@ -567,8 +657,11 @@ def _run_trajectory_chunk(circuit: dict[str, Any], shots: int,
     # LOTE do mesmo estado final, em vez de reexecutar o circuito.
     base = make_simulator(n, seed=int(rng.integers(0, 2**63)),
                           precision=precision, backend=backend)
-    for op in prefix:
-        _apply_static(base, op)
+    if prefix_state is not None:
+        base.state = prefix_state.copy()
+    else:
+        for op in prefix:
+            _apply_static(base, op)
 
     clean_pending = 0
     clean_sim = None
@@ -614,6 +707,34 @@ def _run_trajectory_chunk(circuit: dict[str, Any], shots: int,
 
 
 # ---------------------------------------------------------------------------
+# Resolucao do backend "auto"
+# ---------------------------------------------------------------------------
+def resolve_auto_backend(circuit: dict[str, Any]) -> str:
+    """Escolhe o motor para backend "auto" entre os instalados.
+
+    Circuitos com canais quanticos ou medicao intermediaria vao para o
+    Aer (C++, canais nativos, matriz densidade em registros pequenos);
+    trajetorias em GPU pelo nucleo Python seriam lentas. Circuitos exatos
+    preferem aer-gpu, depois CuPy (kernels in-place do QSim), depois Aer em
+    CPU e por fim o nucleo NumPy, que segue como oraculo de referencia.
+    """
+    from .backends import available_backends
+
+    avail = set(available_backends())
+    noise = NoiseModel.from_dict(circuit.get("noise"))
+    has_mid = any(isinstance(o, dict) and o.get("op") in ("measure", "reset")
+                  for o in circuit.get("operations", []))
+    if noise.quantum or has_mid:
+        order = ("aer-gpu", "aer", "numpy")
+    else:
+        order = ("aer-gpu", "cupy", "aer", "numpy")
+    for name in order:
+        if name in avail:
+            return name
+    return "numpy"
+
+
+# ---------------------------------------------------------------------------
 # Execucao de circuitos JSON
 # ---------------------------------------------------------------------------
 def run_circuit(circuit: dict[str, Any],
@@ -651,6 +772,16 @@ def run_circuit(circuit: dict[str, Any],
                          or circuit.get("observables"))):
             return run_clifford(circuit, should_cancel=should_cancel)
 
+    # Demais casos de "auto": escolhe o melhor motor instalado (ver
+    # resolve_auto_backend) e registra a escolha no resultado.
+    if backend_req == "auto":
+        resolved = resolve_auto_backend(circuit)
+        result = run_circuit({**circuit, "backend": resolved},
+                             should_cancel=should_cancel)
+        result.metadata["backend_requested"] = "auto"
+        result.metadata["backend_resolved"] = resolved
+        return result
+
     t0 = time.perf_counter()
     cancel = should_cancel or (lambda: False)
 
@@ -683,7 +814,9 @@ def run_circuit(circuit: dict[str, Any],
     # ------------------------------------------------------------------
     # Caminho deterministico
     # ------------------------------------------------------------------
-    if not noise.enabled and not has_mid:
+    if not noise.quantum and not has_mid:
+        # Erro de leitura sozinho nao exige trajetorias: e aplicado na
+        # amostragem a partir do estado exato.
         compiled = compile_ops(ops) if fuse else None
 
         def run_once(prec: str) -> StatevectorSimulator:
@@ -705,7 +838,7 @@ def run_circuit(circuit: dict[str, Any],
 
         sim = run_once(precision)
         result = SimResult(
-            counts=sim.sample(shots),
+            counts=sim.sample(shots, readout_error=noise.readout_error),
             shots=shots,
             num_qubits=n,
         )
@@ -733,6 +866,10 @@ def run_circuit(circuit: dict[str, Any],
             "fused_ops": len(compiled) if compiled is not None else len(ops),
             "original_ops": len(ops),
         }
+        if noise.readout_error > 0:
+            meta["readout_error"] = noise.readout_error
+            meta["note"] = ("counts incluem erro de leitura; probabilities "
+                            "e observaveis sao do estado ideal")
 
         if verify:
             if n > VERIFY_MAX_QUBITS:
@@ -766,25 +903,21 @@ def run_circuit(circuit: dict[str, Any],
     _, backend_name = get_backend(backend)
     workers = int(os.environ.get("QSIM_TRAJECTORY_WORKERS", "0")) or \
         (os.cpu_count() or 1)
+    blocks = _trajectory_blocks(shots, seed)
     use_parallel = (parallel and backend_name == "numpy"
-                    and shots >= PARALLEL_MIN_SHOTS and workers > 1)
+                    and shots >= PARALLEL_MIN_SHOTS and workers > 1
+                    and len(blocks) > 1)
 
-    base_rng = np.random.default_rng(seed)
     counts: dict[str, int] = {}
 
     if use_parallel:
-        workers = min(workers, shots)
-        chunk = math.ceil(shots / workers)
-        pieces = []
-        remaining = shots
-        while remaining > 0:
-            take = min(chunk, remaining)
-            pieces.append((take, int(base_rng.integers(0, 2**63))))
-            remaining -= take
+        workers = min(workers, len(blocks))
+        # distribuicao round-robin dos blocos: o resultado nao depende dela
+        tasks = [blocks[i::workers] for i in range(workers)]
         with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = [
-                pool.submit(_run_trajectory_chunk, circuit, take, s)
-                for take, s in pieces
+                pool.submit(_run_trajectory_blocks, circuit, task)
+                for task in tasks
             ]
             for fut in as_completed(futures):
                 if cancel():
@@ -793,20 +926,20 @@ def run_circuit(circuit: dict[str, Any],
                     raise JobCancelled()
                 for k, v in fut.result().items():
                     counts[k] = counts.get(k, 0) + v
-        mode_meta = {"parallel_workers": workers, "chunks": len(pieces)}
+        mode_meta = {"parallel_workers": workers, "chunks": len(blocks)}
     else:
-        done = 0
-        while done < shots:
+        pstate = _prefix_state(circuit)
+        for take, block_seed in blocks:
             if cancel():
                 raise JobCancelled()
-            take = min(64, shots - done)
-            sub = _run_trajectory_chunk(
-                circuit, take, int(base_rng.integers(0, 2**63))
-            )
+            sub = _run_trajectory_chunk(circuit, take, block_seed,
+                                        prefix_state=pstate)
             for k, v in sub.items():
                 counts[k] = counts.get(k, 0) + v
-            done += take
-        mode_meta = {"parallel_workers": 1}
+        mode_meta = {"parallel_workers": 1, "chunks": len(blocks)}
+    mode_meta["seed_scheme"] = (
+        f"SeedSequence por bloco de {TRAJECTORY_BLOCK} shots"
+    )
 
     return SimResult(
         counts=dict(sorted(counts.items())),

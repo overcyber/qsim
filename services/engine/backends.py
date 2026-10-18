@@ -9,7 +9,11 @@ cuQuantum, mas roda CuPy normalmente).
 Selecao:
   "numpy" | "cpu"  -> NumPy
   "cupy"  | "gpu"  -> CuPy (erro claro se indisponivel)
-  "auto"           -> CuPy se instalado e com GPU visivel; senao NumPy
+  "auto"           -> em get_backend: CuPy se instalado, senao NumPy.
+                      Em run_circuit, "auto" e resolvido antes por
+                      simulator.resolve_auto_backend (aer-gpu, cupy, aer,
+                      numpy, conforme o circuito) e o resultado registra
+                      backend_resolved nos metadados.
 """
 from __future__ import annotations
 

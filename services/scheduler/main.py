@@ -46,14 +46,31 @@ def classify(circuit: dict) -> str:
     noise = circuit.get("noise") or {}
     if backend == "clifford":
         return "clifford"
-    if any(v for v in noise.values() if v):
-        return "noisy"
     n = int(circuit.get("num_qubits", 1))
     if n >= settings.class_large_min:
-        return "large"
-    if n >= settings.class_medium_min:
-        return "medium"
-    return "small"
+        size_class = "large"
+    elif n >= settings.class_medium_min:
+        size_class = "medium"
+    else:
+        size_class = "small"
+    # Canais quanticos ou medicao intermediaria exigem trajetorias/canais.
+    # Erro de leitura sozinho roda no caminho exato e nao conta. A classe
+    # noisy (CPU) so recebe registros pequenos: antes, um job de 29 qubits
+    # com ruido caia na CPU independentemente da memoria necessaria.
+    quantum_noise = any(
+        noise.get(k) for k in ("depolarizing", "amplitude_damping")
+    ) or any(
+        v for spec in (noise.get("per_gate") or {}).values()
+        for v in spec.values()
+    ) or any(
+        v for spec in (noise.get("per_qubit") or {}).values()
+        for v in spec.values()
+    )
+    has_mid = any(isinstance(o, dict) and o.get("op") in ("measure", "reset")
+                  for o in circuit.get("operations", []))
+    if (quantum_noise or has_mid) and size_class == "small":
+        return "noisy"
+    return size_class
 
 
 class Scheduler:

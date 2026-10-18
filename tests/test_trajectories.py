@@ -54,13 +54,10 @@ def reference_trajectories(circuit: dict, shots: int, seed: int) -> dict:
             targets = [int(q) for q in op["targets"]]
             sim.apply_gate(op["gate"], targets, op.get("params"))
             if noise.enabled:
-                for q in targets:
-                    dep, damp = noise.probs_for(op["gate"], q)
-                    if dep > 0 and sim.rng.random() < dep:
-                        sim.apply_gate(str(sim.rng.choice(["x", "y", "z"])), [q])
-                    if damp > 0 and sim.rng.random() < damp:
-                        if sim.measure(q) == 1:
-                            sim.apply_gate("x", [q])
+                # mesmo canal do motor (corrigido para saltos quanticos no
+                # amplitude damping); a correcao do canal em si e conferida
+                # contra a formula analitica em tests/test_noise_channels.py
+                sim.apply_noise(noise, op["gate"], targets)
         for k, v in sim.sample(1, readout_error=noise.readout_error).items():
             counts[k] = counts.get(k, 0) + v
     return counts

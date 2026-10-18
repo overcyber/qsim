@@ -1,6 +1,30 @@
 # Changelog
 
-## [Não publicado] — branch melhorias-p0-p2 (1º ciclo do plano de melhoria)
+## [Não publicado] — branch melhorias-p0-p2 (2º lote: P1.2, P1.4 e follow-up P1.1)
+
+### Alterados
+- **Kernels O(1) para portas de 2 qubits** (P1.1 follow-up): inserção dupla
+  de bit zero (posição menor primeiro) elimina o loop O(n) por thread —
+  GHZ-31 c64 na P40 de 131 s para **52,9 s (meta do plano < 60 s)**;
+  benchmark 26q 262 portas/s (baseline 96), 28q 67 (baseline 25). Híbrido
+  25–28q removido (kernels agora dominam em todas as faixas). k=1/k=2 com
+  amplitudes em escalares (sem arrays locais).
+- **cuStateVec como padrão em CC ≥ 7.0** (P1.2): `make_simulator` roteia
+  auto/cupy/gpu para `CuStateVecSimulator` quando disponível; Pascal segue
+  com os kernels próprios. Validado na RTX 3090 (fidelidade 1.0; 15.086
+  portas/s a 20q).
+- **Trajetórias com reuso** (P1.4): prefixo determinístico executa 1× por
+  chunk; shots sem evento estocástico são amostrados em lote do mesmo
+  estado; `apply_noise` reporta divergência. Bell+depol 20k shots:
+  **2,26 s** (baseline 77 s; meta < 5 s). A porta da fronteira estocástica
+  fica no resto (bug da fronteira pego pelo teste de amplitude damping).
+
+### Adicionados
+- `tests/test_trajectories.py`: equivalência estatística com a implementação
+  de referência (pré-P1.4, mantida como oráculo no teste) em 4 cenários de
+  ruído, reprodutibilidade por seed e o KPI de tempo.
+
+## [Não publicado] — branch melhorias-p0-p2 (1º lote: P0 completo, P1.1, P1.3, P1.5, P2.1)
 
 ### Adicionados
 - **Backend Clifford (P2.1)**: simulador por geradores de estabilizadores

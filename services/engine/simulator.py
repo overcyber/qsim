@@ -205,11 +205,10 @@ class StatevectorSimulator:
                 raise ValueError(f"Qubit alvo fora do registro: {t}")
 
         # Caminho rapido GPU (P1.1): kernels in-place, zero alocacao do
-        # tamanho do estado — e o que viabiliza 30-31 qubits na VRAM.
-        # Faixa 25-28 qubits fica no caminho generico: nessas alturas o
-        # matmul cofiado compensa os acessos nao-coalesced do kernel
-        # (benchmark da P40), e a memoria dos buffers extras ainda cabe.
-        if self._kernels is not None and not 25 <= self.n <= 28:
+        # tamanho do estado — viabiliza 30-31 qubits na VRAM e, com a
+        # indexacao O(1), domina o matmul generico em todas as faixas
+        # (benchmark P40: 984 portas/s a 24q vs ~90 do caminho antigo).
+        if self._kernels is not None:
             self._kernels.apply(self.state, mat, targets, self.n)
             return
 
@@ -412,14 +411,21 @@ class StatevectorSimulator:
     # Ruido estocastico (trajetoria)
     # ------------------------------------------------------------------
     def apply_noise(self, noise: NoiseModel, gate: str,
-                    targets: list[int]) -> None:
+                    targets: list[int]) -> bool:
+        """Aplica o canal estocastico pos-porta. Retorna True se algum
+        evento disparou (o estado divergiu do circuito limpo) — usado
+        pelo reuso de trajetorias (P1.4)."""
+        fired = False
         for q in targets:
             dep, damp = noise.probs_for(gate, q)
             if dep > 0 and self.rng.random() < dep:
                 self.apply_gate(str(self.rng.choice(["x", "y", "z"])), [q])
+                fired = True
             if damp > 0 and self.rng.random() < damp:
+                fired = True
                 if self.measure(q) == 1:
                     self.apply_gate("x", [q])
+        return fired
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +434,22 @@ class StatevectorSimulator:
 def make_simulator(num_qubits: int, seed: int | None = None,
                    precision: str = "complex128",
                    backend: str = "numpy") -> StatevectorSimulator:
-    if (backend or "").lower() == "custatevec":
+    key = (backend or "").lower()
+    if key == "custatevec":
         from .backends_custatevec import CuStateVecSimulator
         return CuStateVecSimulator(num_qubits, seed=seed, precision=precision)
+    if key in ("auto", "cupy", "gpu"):
+        # P1.2: em placas Volta+ (CC >= 7.0) o cuStateVec e o caminho padrao
+        # (validado em tests/test_gpu.py); na Pascal (P40) segue CuPy com os
+        # kernels in-place. Qualquer indisponibilidade cai no caminho generico.
+        try:
+            from .backends import available_backends
+            if "custatevec" in available_backends():
+                from .backends_custatevec import CuStateVecSimulator
+                return CuStateVecSimulator(num_qubits, seed=seed,
+                                           precision=precision)
+        except Exception:
+            pass
     return StatevectorSimulator(num_qubits, seed=seed, precision=precision,
                                 backend=backend)
 
@@ -488,42 +507,109 @@ def compile_ops(ops: list[dict]) -> list[tuple[str, Any, list[int]]]:
 
 
 # ---------------------------------------------------------------------------
-# Trajetorias (funcao de modulo para ser picklavel pelo ProcessPool)
+# Trajetorias (P1.4: reuso de prefixo deterministico + shots limpos em lote)
 # ---------------------------------------------------------------------------
+def _apply_static(sim: StatevectorSimulator, op: dict) -> None:
+    """Aplica uma operacao SEM ruido e SEM medicao (prefixo deterministico)."""
+    kind = op.get("op", "gate")
+    if kind == "barrier":
+        return
+    sim.apply_gate(op["gate"], [int(q) for q in op["targets"]], op.get("params"))
+
+
+def _trajectory_plan(circuit: dict) -> tuple[list[dict], list[dict], NoiseModel]:
+    """Divide as operacoes em (prefixo deterministico, resto).
+
+    O prefixo contem as portas que NUNCA divergem entre shots: aquelas
+    antes da primeira cujo ruido pos-porta pode disparar, e antes de
+    qualquer measure/reset intermediario. Executado 1 vez por chunk, o
+    prefixo e clonado por shot — o custo dominante do caminho antigo
+    (reexecutar tudo por shot) some para a parte deterministica.
+    """
+    noise = NoiseModel.from_dict(circuit.get("noise"))
+    ops = circuit["operations"]
+    split = 0
+    for i, op in enumerate(ops):
+        kind = op.get("op", "gate")
+        if kind == "barrier":
+            continue
+        if kind in ("measure", "reset"):
+            break
+        if noise.enabled:
+            for q in op["targets"]:
+                if noise.probs_for(str(op.get("gate")), int(q)) != (0.0, 0.0):
+                    # o ruido POS-PORTA desta porta e estocastico: a porta
+                    # fica no resto (prefixo so porta cujo pos-ruido e zero —
+                    # caso contrario o evento da fronteira se perde)
+                    return ops[:split], ops[split:], noise
+        split = i + 1
+    return ops[:split], ops[split:], noise
+
+
 def _run_trajectory_chunk(circuit: dict[str, Any], shots: int,
                           seed: int) -> dict[str, int]:
     n = int(circuit["num_qubits"])
     precision = str(circuit.get("precision", "complex128"))
     backend = str(circuit.get("backend", "numpy"))
-    noise = NoiseModel.from_dict(circuit.get("noise"))
-    ops = circuit["operations"]
+    prefix, rest, noise = _trajectory_plan(circuit)
+    ro = noise.readout_error
 
     counts: dict[str, int] = {}
     rng = np.random.default_rng(seed)
+
+    def flush(clean_sim, pending: int) -> None:
+        if pending and clean_sim is not None:
+            for k, v in clean_sim.sample(pending, readout_error=ro).items():
+                counts[k] = counts.get(k, 0) + v
+
+    # P1.4: prefixo deterministico uma unica vez; shots sem nenhum evento
+    # estocastico (a esmagadora maioria com ruido leve) sao amostrados EM
+    # LOTE do mesmo estado final, em vez de reexecutar o circuito.
+    base = make_simulator(n, seed=int(rng.integers(0, 2**63)),
+                          precision=precision, backend=backend)
+    for op in prefix:
+        _apply_static(base, op)
+
+    clean_pending = 0
+    clean_sim = None
     for _ in range(shots):
-        sim = make_simulator(
-            n, seed=int(rng.integers(0, 2**63)),
-            precision=precision, backend=backend,
-        )
-        for op in ops:
+        sim = make_simulator(n, seed=int(rng.integers(0, 2**63)),
+                             precision=precision, backend=backend)
+        sim.state = base.state.copy()
+        diverged = False
+        for op in rest:
             kind = op.get("op", "gate")
             if kind == "barrier":
                 continue
             if kind == "measure":
+                diverged = True
                 for q in op["targets"]:
                     sim.measure(int(q))
                 continue
             if kind == "reset":
+                diverged = True
                 for q in op["targets"]:
                     if sim.measure(int(q)) == 1:
                         sim.apply_gate("x", [int(q)])
                 continue
             targets = [int(q) for q in op["targets"]]
             sim.apply_gate(op["gate"], targets, op.get("params"))
-            if noise.enabled:
-                sim.apply_noise(noise, op["gate"], targets)
-        for k, v in sim.sample(1, readout_error=noise.readout_error).items():
+            if noise.enabled and sim.apply_noise(noise, op["gate"], targets):
+                diverged = True
+        if not diverged and not rest:
+            # circuito inteiro deterministico: todos os shots saem do base
+            clean_sim = base
+            clean_pending += 1
+            continue
+        if not diverged:
+            clean_sim = sim
+            clean_pending += 1
+            continue
+        flush(clean_sim, clean_pending)
+        clean_pending = 0
+        for k, v in sim.sample(1, readout_error=ro).items():
             counts[k] = counts.get(k, 0) + v
+    flush(clean_sim, clean_pending)
     return counts
 
 

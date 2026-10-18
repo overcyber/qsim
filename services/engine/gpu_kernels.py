@@ -50,8 +50,21 @@ __global__ void qsim_apply_gate(const __T__* __restrict__ mat,
         // superiores — equivale a iteracao de bits, sem o loop O(n)
         long long mask = (1LL << tmasks[0]) - 1;
         base = (g & mask) | ((g & ~mask) << 1);
+    } else if (k == 2) {
+        // caminho O(1) para 2 alvos: duas insercoes de bit 0 — a MENOR
+        // posicao primeiro (a insercao inferior desloca o buraco superior;
+        // na ordem inversa os indices colidem). O loop O(n) por thread era
+        // o gargalo dominante em 30+ qubits.
+        long long ta = tmasks[0] < tmasks[1] ? tmasks[1] : tmasks[0];
+        long long tb = tmasks[0] < tmasks[1] ? tmasks[0] : tmasks[1];
+        long long x = g;
+        long long mb = (1LL << tb) - 1;
+        x = ((x & ~mb) << 1) | (x & mb);
+        long long ma = (1LL << ta) - 1;
+        x = ((x & ~ma) << 1) | (x & ma);
+        base = x;
     } else {
-        // caminho generico (k = 2, 3): distribui os bits de g nas posicoes
+        // caminho generico (k = 3): distribui os bits de g nas posicoes
         // que NAO sao alvo, cada bit posicionado no seu qubit real
         base = 0;
         long long rest = g;
@@ -66,6 +79,36 @@ __global__ void qsim_apply_gate(const __T__* __restrict__ mat,
     }
 
     const int dim = 1 << k;
+    if (k == 1) {
+        // especializacao 1q: escalares puros (sem arrays locais — indexacao
+        // dinamica de v[]/idx[] forca local memory e derruba o throughput)
+        long long i0 = base, i1 = base | (1LL << tmasks[0]);
+        __T__ a = state[i0], b = state[i1];
+        __T__ r0 = cadd(cmul(mat[0], a), cmul(mat[1], b));
+        __T__ r1 = cadd(cmul(mat[2], a), cmul(mat[3], b));
+        state[i0] = r0;
+        state[i1] = r1;
+        return;
+    }
+    if (k == 2) {
+        // especializacao 2q: 4 amplitudes em escalares, produto 4x4 manual
+        long long t0 = 1LL << tmasks[0], t1 = 1LL << tmasks[1];
+        long long i00 = base;
+        long long i01 = base | t1;
+        long long i10 = base | t0;
+        long long i11 = base | t0 | t1;
+        __T__ v00 = state[i00], v01 = state[i01];
+        __T__ v10 = state[i10], v11 = state[i11];
+        state[i00] = cadd(cadd(cmul(mat[0],  v00), cmul(mat[1],  v01)),
+                          cadd(cmul(mat[2],  v10), cmul(mat[3],  v11)));
+        state[i01] = cadd(cadd(cmul(mat[4],  v00), cmul(mat[5],  v01)),
+                          cadd(cmul(mat[6],  v10), cmul(mat[7],  v11)));
+        state[i10] = cadd(cadd(cmul(mat[8],  v00), cmul(mat[9],  v01)),
+                          cadd(cmul(mat[10], v10), cmul(mat[11], v11)));
+        state[i11] = cadd(cadd(cmul(mat[12], v00), cmul(mat[13], v01)),
+                          cadd(cmul(mat[14], v10), cmul(mat[15], v11)));
+        return;
+    }
     __T__ v[8];
     long long idx[8];
     for (int j = 0; j < dim; j++) {

@@ -35,6 +35,8 @@ jobs:
         run: PYTHONPATH=. python3 tests/test_clifford.py
       - name: Aceleradores CPU (P1.1/P0.3)
         run: PYTHONPATH=. python3 tests/test_inplace.py
+      - name: Trajetorias com reuso (P1.4)
+        run: PYTHONPATH=. python3 tests/test_trajectories.py
       - name: Fuzzer (150 iteracoes)
         run: PYTHONPATH=. python3 tests/fuzz.py 150
 

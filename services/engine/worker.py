@@ -51,6 +51,14 @@ QUBITS_HIST = Histogram(
     "qsim_engine_qubits", "Qubits por job",
     buckets=tuple(range(1, MAX_QUBITS + 1)),
 )
+SIM_SECONDS = Histogram(
+    "qsim_engine_sim_seconds", "Tempo de simulacao por backend",
+    ["backend"],
+    buckets=(0.01, 0.05, 0.1, 0.5, 1, 5, 15, 60, 180, 420),
+)
+VRAM_FREE = Gauge("qsim_engine_vram_free_bytes", "VRAM livre (0 sem GPU)")
+
+CLIFFORD_CLASSES = ("small", "noisy", "medium", "large")
 
 
 def my_classes() -> list[str]:
@@ -59,12 +67,18 @@ def my_classes() -> list[str]:
     if configured != "auto":
         return [c.strip() for c in configured.split(",") if c.strip()]
     backends = available_backends()
-    classes = ["small", "noisy"]
+    classes = ["small", "noisy", "clifford"]
     if "cupy" in backends:
         classes += ["medium", "large"]
     elif "aer" in backends:
         classes.append("medium")  # Aer C++ em CPU: 21-29 qubits com RAM suficiente
     return classes
+
+
+def _estimate_vram_bytes(n: int, precision: str) -> int:
+    """VRAM estimada para um job cupy: estado + probabilidades + folga."""
+    per = 4 if precision in ("complex64", "c64") else 8
+    return int(2**n) * per * 2 * 1.15
 
 
 class EngineWorker:
@@ -73,6 +87,9 @@ class EngineWorker:
         self.running = True
         self.started_at = time.time()
         self.cancel_flags: dict[str, threading.Event] = {}
+        # P0.2: serializa execucao pesada (default 1) — evita dois jobs
+        # estourando a VRAM/competindo pelo mesmo dispositivo.
+        self.slot = asyncio.Semaphore(settings.engine_max_concurrent)
 
     async def start(self) -> None:
         await self.bus.connect()
@@ -88,6 +105,18 @@ class EngineWorker:
             except Exception as err:
                 logger.warning("Numba solicitado mas indisponivel: %s", err)
 
+        # P1.5: compila os kernels GPU fora do caminho critico; o cache em
+        # disco (CUPY_CACHE_DIR em volume) elimina a latencia nos rebootes.
+        try:
+            import cupy as cp  # noqa: F401
+            from services.engine.gpu_kernels import GpuKernels
+            import numpy as _np
+            for dt in (_np.complex64, _np.complex128):
+                GpuKernels(cp, dt)
+            logger.info("Kernels GPU in-place compilados (P1.1 ativo)")
+        except Exception:
+            pass
+
         if settings.use_jetstream:
             await self.bus.ensure_workqueue(
                 settings.nats_stream, [f"{settings.subject_jobs}.>"]
@@ -101,11 +130,14 @@ class EngineWorker:
                     queue=f"{settings.engine_queue_group}-{cls}",
                     durable=f"{settings.engine_queue_group}-{cls}",
                     stream=settings.nats_stream,
+                    # P0.1: folga sobre o timeout do job + heartbeat durante
+                    # a execucao renova o prazo — sem reentrega duplicada.
+                    ack_wait=settings.job_timeout_s + 120,
                 )
             else:
                 await self.bus.subscribe(
                     subject, self.handle_job,
-                    queue=f"{settings.engine_queue_group}-{cls}",
+                    queue=settings.engine_queue_group,
                 )
 
         # Compatibilidade: submissao direta sem scheduler (dev)
@@ -129,7 +161,8 @@ class EngineWorker:
             logger.info("Cancelamento solicitado para job %s em execucao",
                         job_id)
 
-    async def handle_job(self, subject: str, job: dict) -> None:
+    async def handle_job(self, subject: str, job: dict,
+                         progress=None) -> None:
         job_id = str(job.get("job_id", "sem-id"))
         circuit = job.get("circuit", {})
         result_subject = f"{settings.subject_results}.{job_id}"
@@ -146,15 +179,52 @@ class EngineWorker:
         try:
             # O worker NUNCA confia na fila: revalida antes de executar.
             validate_circuit(circuit)
-            loop = asyncio.get_running_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, lambda: run_circuit(
-                        circuit, should_cancel=cancel_flag.is_set
+
+            # P0.2: guarda de VRAM para jobs GPU — rejeita limpo quando o
+            # estado nao cabe, em vez de estourar memoria no meio.
+            backend_req = str(circuit.get("backend", "numpy")).lower()
+            if backend_req in ("cupy", "gpu", "auto", "custatevec"):
+                try:
+                    import cupy as cp
+                    n = int(circuit.get("num_qubits", 0))
+                    need = _estimate_vram_bytes(
+                        n, str(circuit.get("precision", "complex128")))
+                    free, _total = cp.cuda.Device().mem_info
+                    if need > free:
+                        raise ValueError(
+                            f"VRAM insuficiente para {n} qubits: precisa de "
+                            f"{need / 2**30:.1f} GiB, livres {free / 2**30:.1f}"
+                            " GiB (guarda P0.2)"
+                        )
+                except ValueError:
+                    raise
+                except Exception:
+                    pass  # sem cupy visivel (ex.: backend auto em CPU): segue
+
+            # P0.1: heartbeat renova o ack_wait DESDE O RECEBIMENTO —
+            # inclusive enquanto o job espera o semaforo (P0.2), senao a
+            # espera ja estoura o prazo do broker e gera reentrega.
+            heartbeat = None
+            if progress is not None:
+                async def _beat():
+                    while True:
+                        await asyncio.sleep(20)
+                        await progress()
+                heartbeat = asyncio.create_task(_beat())
+            try:
+                async with self.slot:  # P0.2: serializa execucao pesada
+                    loop = asyncio.get_running_loop()
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, lambda: run_circuit(
+                                circuit, should_cancel=cancel_flag.is_set
+                            )
+                        ),
+                        timeout=settings.job_timeout_s,
                     )
-                ),
-                timeout=settings.job_timeout_s,
-            )
+            finally:
+                if heartbeat is not None:
+                    heartbeat.cancel()
             payload = {
                 "job_id": job_id,
                 "status": "done",
@@ -163,6 +233,11 @@ class EngineWorker:
             }
             JOBS_TOTAL.labels(status="done").inc()
             QUBITS_HIST.observe(int(circuit.get("num_qubits", 0)))
+            meta = (result.metadata or {})
+            SIM_SECONDS.labels(
+                backend=str(meta.get("backend") or meta.get("engine")
+                            or meta.get("mode", "?"))
+            ).observe(result.elapsed_ms / 1000)
             logger.info("Job %s concluido em %.1f ms", job_id,
                         result.elapsed_ms)
         except ValueError as err:
@@ -216,6 +291,14 @@ class EngineWorker:
     # ------------------------------------------------------------------
     async def telemetry_loop(self) -> None:
         while self.running:
+            vram = 0.0
+            try:
+                import cupy as cp
+                free, _total = cp.cuda.Device().mem_info
+                vram = free
+            except Exception:
+                pass
+            VRAM_FREE.set(vram)
             await self.bus.publish(
                 f"{settings.subject_telemetry}.engine",
                 {
@@ -223,6 +306,7 @@ class EngineWorker:
                     "ts": time.time(),
                     "classes": my_classes(),
                     "active_jobs": ACTIVE_JOBS._value.get(),
+                    "vram_free_bytes": vram,
                     "uptime_s": time.time() - self.started_at,
                 },
             )

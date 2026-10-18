@@ -42,7 +42,10 @@ ACTIVE = Gauge("qsim_scheduler_active_jobs", "Jobs despachados sem resultado")
 
 
 def classify(circuit: dict) -> str:
+    backend = str(circuit.get("backend", "")).lower()
     noise = circuit.get("noise") or {}
+    if backend == "clifford":
+        return "clifford"
     if any(v for v in noise.values() if v):
         return "noisy"
     n = int(circuit.get("num_qubits", 1))

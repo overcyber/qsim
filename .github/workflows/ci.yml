@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Dependencias
+        run: pip install -r requirements.txt
+      - name: Oraculo fisico
+        run: PYTHONPATH=. python3 tests/test_physics.py
+      - name: Suite metamorfica
+        run: PYTHONPATH=. python3 tests/test_metamorphic.py
+      - name: Suite diferencial (CPU)
+        run: PYTHONPATH=. python3 tests/test_differential.py
+      - name: Suite de pesquisa
+        run: PYTHONPATH=. python3 tests/test_research.py
+      - name: Suite de seguranca
+        run: PYTHONPATH=. python3 tests/test_security.py
+      - name: Backend Aer (paridade)
+        run: PYTHONPATH=. python3 tests/test_backend_aer.py
+      - name: Crosscheck vs Aer
+        run: PYTHONPATH=. python3 tests/test_aer_crosscheck.py 10
+      - name: Clifford (P2.1)
+        run: PYTHONPATH=. python3 tests/test_clifford.py
+      - name: Aceleradores CPU (P1.1/P0.3)
+        run: PYTHONPATH=. python3 tests/test_inplace.py
+      - name: Trajetorias com reuso (P1.4)
+        run: PYTHONPATH=. python3 tests/test_trajectories.py
+      - name: Fuzzer (150 iteracoes)
+        run: PYTHONPATH=. python3 tests/fuzz.py 150
+
+  imagens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build engine CPU
+        run: docker build -f services/engine/Dockerfile -t qsim-engine:ci .
+      - name: Build gateway
+        run: docker build -f services/gateway/Dockerfile -t qsim-gateway:ci .
+      - name: Build scheduler
+        run: docker build -f services/scheduler/Dockerfile -t qsim-scheduler:ci .

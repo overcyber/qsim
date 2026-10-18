@@ -48,6 +48,12 @@ DTYPES = {
 # Ative com QSIM_USE_NUMBA=1; limiar de qubits em QSIM_NUMBA_MIN_QUBITS.
 _USE_NUMBA = os.environ.get("QSIM_USE_NUMBA", "0") == "1"
 _NUMBA_MIN_QUBITS = int(os.environ.get("QSIM_NUMBA_MIN_QUBITS", "18"))
+# Kernels GPU in-place (P1.1): "auto" usa quando CuPy disponivel; "off"
+# volta ao caminho generico moveaxis+matmul (referencia de comparacao).
+_USE_KERNELS = os.environ.get("QSIM_KERNELS", "auto").lower()
+# Amostragem por blocos (P0.3): CDF float64 materializada em pedacos de
+# 16 Mi de amplitudes, permitindo amostrar 31 qubits sem dobrar a VRAM.
+_SAMPLE_CHUNK = 1 << 24
 
 
 class JobCancelled(Exception):
@@ -164,6 +170,15 @@ class StatevectorSimulator:
                 self._numba = numba_kernels.HAS_NUMBA
             except Exception:
                 self._numba = False
+        # Kernels in-place (GPU): compilados sob demanda por dtype e
+        # cacheados; qualquer falha desativa sem quebrar o worker.
+        self._kernels = None
+        if (self.backend_name == "cupy" and _USE_KERNELS in ("auto", "on", "1")):
+            try:
+                from .gpu_kernels import GpuKernels
+                self._kernels = GpuKernels(self.xp, self.dtype)
+            except Exception:
+                self._kernels = None
         self.reset()
 
     # ------------------------------------------------------------------
@@ -184,10 +199,18 @@ class StatevectorSimulator:
         if mat.shape != (2**k, 2**k):
             raise ValueError("Dimensao da matriz incompativel com os alvos")
         if len(set(targets)) != k:
-            raise ValueError("Qubits alvo repetidos")
+            raise ValueError("Qubit alvo repetido")
         for t in targets:
             if not isinstance(t, int) or not 0 <= t < self.n:
                 raise ValueError(f"Qubit alvo fora do registro: {t}")
+
+        # Caminho rapido GPU (P1.1): kernels in-place, zero alocacao do
+        # tamanho do estado — viabiliza 30-31 qubits na VRAM e, com a
+        # indexacao O(1), domina o matmul generico em todas as faixas
+        # (benchmark P40: 984 portas/s a 24q vs ~90 do caminho antigo).
+        if self._kernels is not None:
+            self._kernels.apply(self.state, mat, targets, self.n)
+            return
 
         # Caminho rapido EXPERIMENTAL: kernel Numba in-place para portas 1q.
         if self._numba and k == 1 and self.n >= _NUMBA_MIN_QUBITS:
@@ -210,8 +233,10 @@ class StatevectorSimulator:
         rest = psi.shape[k:]
         out = mat @ psi.reshape(2**k, -1)
         out = out.reshape([2] * k + list(rest))
-        out = xp.moveaxis(out, range(k), axes)
-        self.state = xp.ascontiguousarray(out.reshape(-1))
+        # Escrita de volta ATRAVES da visao moveaxis: muta o buffer original
+        # in-place e elimina a copia final ascontiguousarray (que custava um
+        # buffer adicional do tamanho do estado por porta).
+        psi[...] = out
 
     def apply_gate(self, name: str, targets: list[int],
                    params: list[float] | None = None) -> None:
@@ -252,7 +277,10 @@ class StatevectorSimulator:
         """<psi| P |psi> para P = string sobre IXYZ.
 
         Caractere na posicao j atua no qubit j (pauli[0] -> qubit 0).
-        Custa uma copia do estado; limitado a PAULI_MAX_QUBITS.
+        Com kernels GPU (P1.3): uma passada sobre o estado, SEM copia e
+        sem aplicar portas — teto pratico sobe para o do statevector.
+        No caminho CPU, custa uma copia do estado (limitado a
+        PAULI_MAX_QUBITS).
         """
         xp = self.xp
         p = pauli.upper()
@@ -260,6 +288,8 @@ class StatevectorSimulator:
             raise ValueError(
                 f"Pauli invalido: use string de tamanho {self.n} sobre IXYZ"
             )
+        if self._kernels is not None:
+            return self._kernels.pauli_expectation(self.state, p, self.n)
         if self.n > PAULI_MAX_QUBITS:
             raise ValueError(
                 f"Observavel Pauli limitado a {PAULI_MAX_QUBITS} qubits"
@@ -307,19 +337,58 @@ class StatevectorSimulator:
         return float(ent)
 
     def probabilities(self):
-        p = self.xp.abs(self.state) ** 2
-        return p.astype(self.xp.float64, copy=False)
+        # dtype nativo (float32 para c64) e preenchimento por blocos em um
+        # unico array pre-alocado: pico = estado + 1 saida + 1 bloco — nunca
+        # 2x temporarios do tamanho do estado (inviavel em 31 qubits).
+        xp = self.xp
+        size = self.state.size
+        dt = xp.float32 if self.dtype == np.complex64 else xp.float64
+        out = xp.empty(size, dtype=dt)
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            out[s:s + _SAMPLE_CHUNK] = (chunk.real * chunk.real)
+            out[s:s + _SAMPLE_CHUNK] += (chunk.imag * chunk.imag)
+        return out
 
     # ------------------------------------------------------------------
-    # Amostragem vetorizada
+    # Amostragem vetorizada (por blocos: P0.3)
     # ------------------------------------------------------------------
     def sample(self, shots: int, readout_error: float = 0.0) -> dict[str, int]:
+        """Amostra `shots` resultados medindo todos os qubits.
+
+        Nunca materializa um vetor de probabilidades do tamanho do estado:
+        os quadrados |a|^2 sao computados por bloco direto do estado (duas
+        passadas: total e busca), com acumulo float64 — viabiliza amostrar
+        31 qubits c64 (8 GiB de estado) sem dobrar a VRAM em pico.
+        """
         xp = self.xp
-        cdf = xp.cumsum(self.probabilities())
-        cdf /= cdf[-1]
-        u = xp.asarray(self.rng.random(shots))
-        idx = xp.searchsorted(cdf, u, side="right")
-        idx = xp.clip(idx, 0, 2**self.n - 1).astype(xp.int64)
+        size = self.state.size
+        u = self.rng.random(shots)
+
+        # passada 1: total (float64)
+        total = 0.0
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+            total += float(xp.sum(sq, dtype=xp.float64))
+
+        targets = xp.asarray(u) * total
+        idx = xp.empty(shots, dtype=xp.int64)
+        filled = xp.zeros(shots, dtype=bool)
+        offset = 0.0
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+            cs = xp.cumsum(sq.astype(xp.float64)) + offset
+            end = float(cs[-1])
+            sel = (targets >= offset) & (targets < end)
+            if bool(xp.any(sel)):
+                pos = xp.searchsorted(cs, targets[sel], side="right")
+                idx[sel] = xp.clip(pos, 0, chunk.size - 1) + s
+                filled |= sel
+            offset = end
+        if not bool(xp.all(filled)):  # bordas de arredondamento: ultimo estado
+            idx[~filled] = size - 1
 
         if readout_error > 0:
             flips = xp.asarray(self.rng.random((shots, self.n)) < readout_error)
@@ -342,14 +411,21 @@ class StatevectorSimulator:
     # Ruido estocastico (trajetoria)
     # ------------------------------------------------------------------
     def apply_noise(self, noise: NoiseModel, gate: str,
-                    targets: list[int]) -> None:
+                    targets: list[int]) -> bool:
+        """Aplica o canal estocastico pos-porta. Retorna True se algum
+        evento disparou (o estado divergiu do circuito limpo) — usado
+        pelo reuso de trajetorias (P1.4)."""
+        fired = False
         for q in targets:
             dep, damp = noise.probs_for(gate, q)
             if dep > 0 and self.rng.random() < dep:
                 self.apply_gate(str(self.rng.choice(["x", "y", "z"])), [q])
+                fired = True
             if damp > 0 and self.rng.random() < damp:
+                fired = True
                 if self.measure(q) == 1:
                     self.apply_gate("x", [q])
+        return fired
 
 
 # ---------------------------------------------------------------------------
@@ -358,9 +434,22 @@ class StatevectorSimulator:
 def make_simulator(num_qubits: int, seed: int | None = None,
                    precision: str = "complex128",
                    backend: str = "numpy") -> StatevectorSimulator:
-    if (backend or "").lower() == "custatevec":
+    key = (backend or "").lower()
+    if key == "custatevec":
         from .backends_custatevec import CuStateVecSimulator
         return CuStateVecSimulator(num_qubits, seed=seed, precision=precision)
+    if key in ("auto", "cupy", "gpu"):
+        # P1.2: em placas Volta+ (CC >= 7.0) o cuStateVec e o caminho padrao
+        # (validado em tests/test_gpu.py); na Pascal (P40) segue CuPy com os
+        # kernels in-place. Qualquer indisponibilidade cai no caminho generico.
+        try:
+            from .backends import available_backends
+            if "custatevec" in available_backends():
+                from .backends_custatevec import CuStateVecSimulator
+                return CuStateVecSimulator(num_qubits, seed=seed,
+                                           precision=precision)
+        except Exception:
+            pass
     return StatevectorSimulator(num_qubits, seed=seed, precision=precision,
                                 backend=backend)
 
@@ -418,42 +507,109 @@ def compile_ops(ops: list[dict]) -> list[tuple[str, Any, list[int]]]:
 
 
 # ---------------------------------------------------------------------------
-# Trajetorias (funcao de modulo para ser picklavel pelo ProcessPool)
+# Trajetorias (P1.4: reuso de prefixo deterministico + shots limpos em lote)
 # ---------------------------------------------------------------------------
+def _apply_static(sim: StatevectorSimulator, op: dict) -> None:
+    """Aplica uma operacao SEM ruido e SEM medicao (prefixo deterministico)."""
+    kind = op.get("op", "gate")
+    if kind == "barrier":
+        return
+    sim.apply_gate(op["gate"], [int(q) for q in op["targets"]], op.get("params"))
+
+
+def _trajectory_plan(circuit: dict) -> tuple[list[dict], list[dict], NoiseModel]:
+    """Divide as operacoes em (prefixo deterministico, resto).
+
+    O prefixo contem as portas que NUNCA divergem entre shots: aquelas
+    antes da primeira cujo ruido pos-porta pode disparar, e antes de
+    qualquer measure/reset intermediario. Executado 1 vez por chunk, o
+    prefixo e clonado por shot — o custo dominante do caminho antigo
+    (reexecutar tudo por shot) some para a parte deterministica.
+    """
+    noise = NoiseModel.from_dict(circuit.get("noise"))
+    ops = circuit["operations"]
+    split = 0
+    for i, op in enumerate(ops):
+        kind = op.get("op", "gate")
+        if kind == "barrier":
+            continue
+        if kind in ("measure", "reset"):
+            break
+        if noise.enabled:
+            for q in op["targets"]:
+                if noise.probs_for(str(op.get("gate")), int(q)) != (0.0, 0.0):
+                    # o ruido POS-PORTA desta porta e estocastico: a porta
+                    # fica no resto (prefixo so porta cujo pos-ruido e zero —
+                    # caso contrario o evento da fronteira se perde)
+                    return ops[:split], ops[split:], noise
+        split = i + 1
+    return ops[:split], ops[split:], noise
+
+
 def _run_trajectory_chunk(circuit: dict[str, Any], shots: int,
                           seed: int) -> dict[str, int]:
     n = int(circuit["num_qubits"])
     precision = str(circuit.get("precision", "complex128"))
     backend = str(circuit.get("backend", "numpy"))
-    noise = NoiseModel.from_dict(circuit.get("noise"))
-    ops = circuit["operations"]
+    prefix, rest, noise = _trajectory_plan(circuit)
+    ro = noise.readout_error
 
     counts: dict[str, int] = {}
     rng = np.random.default_rng(seed)
+
+    def flush(clean_sim, pending: int) -> None:
+        if pending and clean_sim is not None:
+            for k, v in clean_sim.sample(pending, readout_error=ro).items():
+                counts[k] = counts.get(k, 0) + v
+
+    # P1.4: prefixo deterministico uma unica vez; shots sem nenhum evento
+    # estocastico (a esmagadora maioria com ruido leve) sao amostrados EM
+    # LOTE do mesmo estado final, em vez de reexecutar o circuito.
+    base = make_simulator(n, seed=int(rng.integers(0, 2**63)),
+                          precision=precision, backend=backend)
+    for op in prefix:
+        _apply_static(base, op)
+
+    clean_pending = 0
+    clean_sim = None
     for _ in range(shots):
-        sim = make_simulator(
-            n, seed=int(rng.integers(0, 2**63)),
-            precision=precision, backend=backend,
-        )
-        for op in ops:
+        sim = make_simulator(n, seed=int(rng.integers(0, 2**63)),
+                             precision=precision, backend=backend)
+        sim.state = base.state.copy()
+        diverged = False
+        for op in rest:
             kind = op.get("op", "gate")
             if kind == "barrier":
                 continue
             if kind == "measure":
+                diverged = True
                 for q in op["targets"]:
                     sim.measure(int(q))
                 continue
             if kind == "reset":
+                diverged = True
                 for q in op["targets"]:
                     if sim.measure(int(q)) == 1:
                         sim.apply_gate("x", [int(q)])
                 continue
             targets = [int(q) for q in op["targets"]]
             sim.apply_gate(op["gate"], targets, op.get("params"))
-            if noise.enabled:
-                sim.apply_noise(noise, op["gate"], targets)
-        for k, v in sim.sample(1, readout_error=noise.readout_error).items():
+            if noise.enabled and sim.apply_noise(noise, op["gate"], targets):
+                diverged = True
+        if not diverged and not rest:
+            # circuito inteiro deterministico: todos os shots saem do base
+            clean_sim = base
+            clean_pending += 1
+            continue
+        if not diverged:
+            clean_sim = sim
+            clean_pending += 1
+            continue
+        flush(clean_sim, clean_pending)
+        clean_pending = 0
+        for k, v in sim.sample(1, readout_error=ro).items():
             counts[k] = counts.get(k, 0) + v
+    flush(clean_sim, clean_pending)
     return counts
 
 
@@ -473,9 +629,27 @@ def run_circuit(circuit: dict[str, Any],
     a execucao para com JobCancelled (cancelamento cooperativo).
     """
     backend_req = str(circuit.get("backend", "numpy")).lower()
+    if backend_req == "clifford":
+        from .clifford import run_clifford
+        return run_clifford(circuit, should_cancel=should_cancel)
     if backend_req in ("aer", "aer-gpu"):
         from .backend_aer import run_aer
         return run_aer(circuit, should_cancel=should_cancel)
+
+    # Rota automatica (P2.1): circuito 100% Clifford acima de 20 qubits usa
+    # tableau O(n^2) — o statevector seria inviavel ou desnecessariamente caro.
+    if backend_req == "auto" and int(circuit.get("num_qubits", 0)) > 20:
+        from .clifford import is_clifford_circuit, run_clifford
+        noise = circuit.get("noise") or {}
+        if (is_clifford_circuit(circuit.get("operations", []))
+                and not any(noise.get(k) for k in
+                            ("depolarizing", "amplitude_damping", "readout_error"))
+                and not noise.get("per_gate") and not noise.get("per_qubit")
+                and not (circuit.get("return_statevector")
+                         or circuit.get("return_bloch")
+                         or circuit.get("return_entanglement")
+                         or circuit.get("observables"))):
+            return run_clifford(circuit, should_cancel=should_cancel)
 
     t0 = time.perf_counter()
     cancel = should_cancel or (lambda: False)
@@ -649,16 +823,31 @@ def run_circuit(circuit: dict[str, Any],
 
 
 def _prob_summary(sim: StatevectorSimulator) -> dict[str, float]:
-    probs = to_cpu(sim.probabilities())
     n = sim.n
     if n <= PROBS_FULL_MAX:
+        probs = to_cpu(sim.probabilities())
         idx = np.nonzero(probs > 1e-12)[0]
-    else:
-        k = min(PROBS_TOP_K, probs.size)
-        idx = np.argpartition(probs, -k)[-k:]
-        idx = idx[probs[idx] > 1e-12]
-    idx = idx[np.argsort(-probs[idx])]
-    return {format(int(i), f"0{n}b"): float(probs[i]) for i in idx}
+        idx = idx[np.argsort(-probs[idx])]
+        return {format(int(i), f"0{n}b"): float(probs[i]) for i in idx}
+    # n grande: top-k em STREAMING por blocos — nunca materializa o vetor
+    # completo de probabilidades (em 30-31 qubits ele nao cabe junto do
+    # estado na VRAM).
+    xp = sim.xp
+    k = min(PROBS_TOP_K, 2**n)
+    best: dict[int, float] = {}
+    size = sim.state.size
+    for s in range(0, size, _SAMPLE_CHUNK):
+        chunk = sim.state[s:s + _SAMPLE_CHUNK]
+        sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+        kk = min(k, chunk.size)
+        idx_l = xp.argpartition(sq, -kk)[-kk:]
+        vals = to_cpu(sq[idx_l])
+        idxs = to_cpu(idx_l)
+        for i, v in zip(idxs, vals):
+            if v > 1e-12:
+                best[s + int(i)] = float(v)
+    top = sorted(best.items(), key=lambda kv: -kv[1])[:k]
+    return {format(i, f"0{n}b"): p for i, p in top}
 
 
 def _expectations(sim: StatevectorSimulator,

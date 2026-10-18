@@ -23,7 +23,8 @@ MAX_PARAMS = 8
 MAX_LABEL_LEN = 128
 ALLOWED_OPS = {"gate", "measure", "reset", "barrier"}
 ALLOWED_PRECISIONS = {"complex64", "complex128", "c64", "c128"}
-ALLOWED_BACKENDS = {"numpy", "cupy", "cpu", "gpu", "auto", "custatevec", "aer", "aer-gpu"}
+ALLOWED_BACKENDS = {"numpy", "cupy", "cpu", "gpu", "auto", "custatevec",
+                    "aer", "aer-gpu", "clifford"}
 ALLOWED_NOISE_KEYS = {"depolarizing", "amplitude_damping", "readout_error",
                       "per_gate", "per_qubit"}
 ALLOWED_NOISE_SUBKEYS = {"depolarizing", "amplitude_damping"}
@@ -44,8 +45,11 @@ def validate_circuit(circuit: Any) -> None:
         raise ValueError(f"Campos desconhecidos no circuito: {sorted(extra)}")
 
     n = circuit.get("num_qubits")
-    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= MAX_QUBITS:
-        raise ValueError(f"num_qubits deve ser inteiro entre 1 e {MAX_QUBITS}")
+    cap = settings.max_qubits
+    if str(circuit.get("backend", "")).lower() == "clifford":
+        cap = max(cap, settings.clifford_max_qubits)   # teto proprio (P2.1)
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= cap:
+        raise ValueError(f"num_qubits deve ser inteiro entre 1 e {cap}")
 
     shots = circuit.get("shots", 1024)
     if not isinstance(shots, int) or isinstance(shots, bool) or not 1 <= shots <= MAX_SHOTS:
@@ -61,7 +65,8 @@ def validate_circuit(circuit: Any) -> None:
 
     backend = circuit.get("backend", "numpy")
     if backend not in ALLOWED_BACKENDS:
-        raise ValueError("backend deve ser numpy, cupy, custatevec, aer, aer-gpu ou auto")
+        raise ValueError("backend deve ser numpy, cupy, custatevec, aer, "
+                         "aer-gpu, clifford ou auto")
 
     for flag in ("fuse", "verify", "parallel", "return_statevector",
                  "return_bloch", "return_entanglement"):

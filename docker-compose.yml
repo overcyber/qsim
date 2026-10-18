@@ -31,6 +31,7 @@ x-engine-gpu: &engine-gpu
     <<: *engine-env
   volumes:
     - qsim-logs:/var/log/qsim
+    - qsim-kernel-cache:/cache
   depends_on:
     nats:
       condition: service_healthy
@@ -83,7 +84,7 @@ services:
     environment:
       <<: *engine-env
       CUDA_VISIBLE_DEVICES: "0"        # RTX 3090 24GB
-      QSIM_ENGINE_CLASSES: "small,medium,large,noisy"
+      QSIM_ENGINE_CLASSES: "small,medium,large,noisy,clifford"
     deploy:
       resources:
         reservations:
@@ -97,7 +98,7 @@ services:
     environment:
       <<: *engine-env
       CUDA_VISIBLE_DEVICES: "0"
-      QSIM_ENGINE_CLASSES: "small,medium,noisy"   # 4060 Ti 16GB: ate 30 qubits
+      QSIM_ENGINE_CLASSES: "small,medium,noisy,clifford"   # 4060 Ti 16GB: ate 30 qubits
     deploy:
       resources:
         reservations:
@@ -111,7 +112,7 @@ services:
     environment:
       <<: *engine-env
       CUDA_VISIBLE_DEVICES: "0"
-      QSIM_ENGINE_CLASSES: "small,medium,large,noisy"  # Tesla P40 24GB (CuPy)
+      QSIM_ENGINE_CLASSES: "small,medium,large,noisy,clifford"  # Tesla P40 24GB (CuPy)
     deploy:
       resources:
         reservations:
@@ -181,3 +182,4 @@ services:
 volumes:
   qsim-logs:
   qsim-data:
+  qsim-kernel-cache:

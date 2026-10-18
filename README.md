@@ -5,7 +5,6 @@ microserviços: NATS + MessagePack internamente, console web de pesquisa e
 administração na porta 10000, monitoramento Prometheus/Grafana.
 
 ## Subir o sistema
-
     docker compose up --build                    # CPU (dev)
     docker compose --profile gpu up --build      # com as GPUs (um worker por placa)
     docker compose -f docker-compose.yml -f docker-compose.secure.yml up   # NATS com contas
@@ -74,4 +73,13 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
     docs/PESQUISA.md           guia de uso para pesquisa (web, SDK, receitas, exports)
     docs/PLANO_DE_MELHORIA.md  avaliação profunda, comparativo com outros simuladores
                                e plano de melhoria em fases (P0-P4) com critérios de aceite
+    docs/EXECUCAO_PLANO.md     o que foi executado do plano, validações e KPIs medidos
+    docs/TESTES_PRATICOS.md    receitas prontas de experimentos (console, curl, SDK)
+                               com saídas reais medidas e como interpretá-las
+    CHANGELOG.md               histórico de mudanças
     requirements-gpu.txt       dependencias opcionais: cupy-cuda12x, cuquantum (Volta+), numba
+
+Backends: `numpy` (referência), `cupy` (GPU, kernels in-place até 31 qubits
+na VRAM), `custatevec` (Volta+), `aer`/`aer-gpu` (motor C++), `clifford`
+(tableau O(n²) — milhares de qubits em circuitos Clifford, com auto-rota
+acima de 20 qubits) e `auto`.

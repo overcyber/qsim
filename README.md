@@ -75,6 +75,8 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
     docs/PLANO_DE_MELHORIA.md  avaliação profunda, comparativo com outros simuladores
                                e plano de melhoria em fases (P0-P4) com critérios de aceite
     docs/EXECUCAO_PLANO.md     o que foi executado do plano, validações e KPIs medidos
+    docs/TESTES_PRATICOS.md    receitas prontas de experimentos (console, curl, SDK)
+                               com saídas reais medidas e como interpretá-las
     CHANGELOG.md               histórico de mudanças
     requirements-gpu.txt       dependencias opcionais: cupy-cuda12x, cuquantum (Volta+), numba
 

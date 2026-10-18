@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # Limites do simulador (defesa em profundidade: tambem no worker)
     max_qubits: int = 31
+    clifford_max_qubits: int = 2048  # tableau O(n^2): teto proprio (P2.1)
     max_shots: int = 1_000_000
     max_operations: int = 20_000
     job_timeout_s: int = 300
@@ -37,7 +38,8 @@ class Settings(BaseSettings):
     # Engine
     engine_backend: str = "auto"            # numpy | cupy | auto
     engine_default_precision: str = "complex128"
-    engine_classes: str = "auto"            # auto ou lista: small,medium,large,noisy
+    engine_classes: str = "auto"            # auto ou lista: small,medium,large,noisy,clifford
+    engine_max_concurrent: int = 1          # jobs pesados simultaneos por worker (P0.2)
     trajectory_workers: int = 0             # 0 = os.cpu_count()
 
     # Persistencia do gateway (historico de jobs)

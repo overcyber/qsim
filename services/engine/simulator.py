@@ -48,6 +48,12 @@ DTYPES = {
 # Ative com QSIM_USE_NUMBA=1; limiar de qubits em QSIM_NUMBA_MIN_QUBITS.
 _USE_NUMBA = os.environ.get("QSIM_USE_NUMBA", "0") == "1"
 _NUMBA_MIN_QUBITS = int(os.environ.get("QSIM_NUMBA_MIN_QUBITS", "18"))
+# Kernels GPU in-place (P1.1): "auto" usa quando CuPy disponivel; "off"
+# volta ao caminho generico moveaxis+matmul (referencia de comparacao).
+_USE_KERNELS = os.environ.get("QSIM_KERNELS", "auto").lower()
+# Amostragem por blocos (P0.3): CDF float64 materializada em pedacos de
+# 16 Mi de amplitudes, permitindo amostrar 31 qubits sem dobrar a VRAM.
+_SAMPLE_CHUNK = 1 << 24
 
 
 class JobCancelled(Exception):
@@ -164,6 +170,15 @@ class StatevectorSimulator:
                 self._numba = numba_kernels.HAS_NUMBA
             except Exception:
                 self._numba = False
+        # Kernels in-place (GPU): compilados sob demanda por dtype e
+        # cacheados; qualquer falha desativa sem quebrar o worker.
+        self._kernels = None
+        if (self.backend_name == "cupy" and _USE_KERNELS in ("auto", "on", "1")):
+            try:
+                from .gpu_kernels import GpuKernels
+                self._kernels = GpuKernels(self.xp, self.dtype)
+            except Exception:
+                self._kernels = None
         self.reset()
 
     # ------------------------------------------------------------------
@@ -184,10 +199,19 @@ class StatevectorSimulator:
         if mat.shape != (2**k, 2**k):
             raise ValueError("Dimensao da matriz incompativel com os alvos")
         if len(set(targets)) != k:
-            raise ValueError("Qubits alvo repetidos")
+            raise ValueError("Qubit alvo repetido")
         for t in targets:
             if not isinstance(t, int) or not 0 <= t < self.n:
                 raise ValueError(f"Qubit alvo fora do registro: {t}")
+
+        # Caminho rapido GPU (P1.1): kernels in-place, zero alocacao do
+        # tamanho do estado — e o que viabiliza 30-31 qubits na VRAM.
+        # Faixa 25-28 qubits fica no caminho generico: nessas alturas o
+        # matmul cofiado compensa os acessos nao-coalesced do kernel
+        # (benchmark da P40), e a memoria dos buffers extras ainda cabe.
+        if self._kernels is not None and not 25 <= self.n <= 28:
+            self._kernels.apply(self.state, mat, targets, self.n)
+            return
 
         # Caminho rapido EXPERIMENTAL: kernel Numba in-place para portas 1q.
         if self._numba and k == 1 and self.n >= _NUMBA_MIN_QUBITS:
@@ -210,8 +234,10 @@ class StatevectorSimulator:
         rest = psi.shape[k:]
         out = mat @ psi.reshape(2**k, -1)
         out = out.reshape([2] * k + list(rest))
-        out = xp.moveaxis(out, range(k), axes)
-        self.state = xp.ascontiguousarray(out.reshape(-1))
+        # Escrita de volta ATRAVES da visao moveaxis: muta o buffer original
+        # in-place e elimina a copia final ascontiguousarray (que custava um
+        # buffer adicional do tamanho do estado por porta).
+        psi[...] = out
 
     def apply_gate(self, name: str, targets: list[int],
                    params: list[float] | None = None) -> None:
@@ -252,7 +278,10 @@ class StatevectorSimulator:
         """<psi| P |psi> para P = string sobre IXYZ.
 
         Caractere na posicao j atua no qubit j (pauli[0] -> qubit 0).
-        Custa uma copia do estado; limitado a PAULI_MAX_QUBITS.
+        Com kernels GPU (P1.3): uma passada sobre o estado, SEM copia e
+        sem aplicar portas — teto pratico sobe para o do statevector.
+        No caminho CPU, custa uma copia do estado (limitado a
+        PAULI_MAX_QUBITS).
         """
         xp = self.xp
         p = pauli.upper()
@@ -260,6 +289,8 @@ class StatevectorSimulator:
             raise ValueError(
                 f"Pauli invalido: use string de tamanho {self.n} sobre IXYZ"
             )
+        if self._kernels is not None:
+            return self._kernels.pauli_expectation(self.state, p, self.n)
         if self.n > PAULI_MAX_QUBITS:
             raise ValueError(
                 f"Observavel Pauli limitado a {PAULI_MAX_QUBITS} qubits"
@@ -307,19 +338,58 @@ class StatevectorSimulator:
         return float(ent)
 
     def probabilities(self):
-        p = self.xp.abs(self.state) ** 2
-        return p.astype(self.xp.float64, copy=False)
+        # dtype nativo (float32 para c64) e preenchimento por blocos em um
+        # unico array pre-alocado: pico = estado + 1 saida + 1 bloco — nunca
+        # 2x temporarios do tamanho do estado (inviavel em 31 qubits).
+        xp = self.xp
+        size = self.state.size
+        dt = xp.float32 if self.dtype == np.complex64 else xp.float64
+        out = xp.empty(size, dtype=dt)
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            out[s:s + _SAMPLE_CHUNK] = (chunk.real * chunk.real)
+            out[s:s + _SAMPLE_CHUNK] += (chunk.imag * chunk.imag)
+        return out
 
     # ------------------------------------------------------------------
-    # Amostragem vetorizada
+    # Amostragem vetorizada (por blocos: P0.3)
     # ------------------------------------------------------------------
     def sample(self, shots: int, readout_error: float = 0.0) -> dict[str, int]:
+        """Amostra `shots` resultados medindo todos os qubits.
+
+        Nunca materializa um vetor de probabilidades do tamanho do estado:
+        os quadrados |a|^2 sao computados por bloco direto do estado (duas
+        passadas: total e busca), com acumulo float64 — viabiliza amostrar
+        31 qubits c64 (8 GiB de estado) sem dobrar a VRAM em pico.
+        """
         xp = self.xp
-        cdf = xp.cumsum(self.probabilities())
-        cdf /= cdf[-1]
-        u = xp.asarray(self.rng.random(shots))
-        idx = xp.searchsorted(cdf, u, side="right")
-        idx = xp.clip(idx, 0, 2**self.n - 1).astype(xp.int64)
+        size = self.state.size
+        u = self.rng.random(shots)
+
+        # passada 1: total (float64)
+        total = 0.0
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+            total += float(xp.sum(sq, dtype=xp.float64))
+
+        targets = xp.asarray(u) * total
+        idx = xp.empty(shots, dtype=xp.int64)
+        filled = xp.zeros(shots, dtype=bool)
+        offset = 0.0
+        for s in range(0, size, _SAMPLE_CHUNK):
+            chunk = self.state[s:s + _SAMPLE_CHUNK]
+            sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+            cs = xp.cumsum(sq.astype(xp.float64)) + offset
+            end = float(cs[-1])
+            sel = (targets >= offset) & (targets < end)
+            if bool(xp.any(sel)):
+                pos = xp.searchsorted(cs, targets[sel], side="right")
+                idx[sel] = xp.clip(pos, 0, chunk.size - 1) + s
+                filled |= sel
+            offset = end
+        if not bool(xp.all(filled)):  # bordas de arredondamento: ultimo estado
+            idx[~filled] = size - 1
 
         if readout_error > 0:
             flips = xp.asarray(self.rng.random((shots, self.n)) < readout_error)
@@ -473,9 +543,27 @@ def run_circuit(circuit: dict[str, Any],
     a execucao para com JobCancelled (cancelamento cooperativo).
     """
     backend_req = str(circuit.get("backend", "numpy")).lower()
+    if backend_req == "clifford":
+        from .clifford import run_clifford
+        return run_clifford(circuit, should_cancel=should_cancel)
     if backend_req in ("aer", "aer-gpu"):
         from .backend_aer import run_aer
         return run_aer(circuit, should_cancel=should_cancel)
+
+    # Rota automatica (P2.1): circuito 100% Clifford acima de 20 qubits usa
+    # tableau O(n^2) — o statevector seria inviavel ou desnecessariamente caro.
+    if backend_req == "auto" and int(circuit.get("num_qubits", 0)) > 20:
+        from .clifford import is_clifford_circuit, run_clifford
+        noise = circuit.get("noise") or {}
+        if (is_clifford_circuit(circuit.get("operations", []))
+                and not any(noise.get(k) for k in
+                            ("depolarizing", "amplitude_damping", "readout_error"))
+                and not noise.get("per_gate") and not noise.get("per_qubit")
+                and not (circuit.get("return_statevector")
+                         or circuit.get("return_bloch")
+                         or circuit.get("return_entanglement")
+                         or circuit.get("observables"))):
+            return run_clifford(circuit, should_cancel=should_cancel)
 
     t0 = time.perf_counter()
     cancel = should_cancel or (lambda: False)
@@ -649,16 +737,31 @@ def run_circuit(circuit: dict[str, Any],
 
 
 def _prob_summary(sim: StatevectorSimulator) -> dict[str, float]:
-    probs = to_cpu(sim.probabilities())
     n = sim.n
     if n <= PROBS_FULL_MAX:
+        probs = to_cpu(sim.probabilities())
         idx = np.nonzero(probs > 1e-12)[0]
-    else:
-        k = min(PROBS_TOP_K, probs.size)
-        idx = np.argpartition(probs, -k)[-k:]
-        idx = idx[probs[idx] > 1e-12]
-    idx = idx[np.argsort(-probs[idx])]
-    return {format(int(i), f"0{n}b"): float(probs[i]) for i in idx}
+        idx = idx[np.argsort(-probs[idx])]
+        return {format(int(i), f"0{n}b"): float(probs[i]) for i in idx}
+    # n grande: top-k em STREAMING por blocos — nunca materializa o vetor
+    # completo de probabilidades (em 30-31 qubits ele nao cabe junto do
+    # estado na VRAM).
+    xp = sim.xp
+    k = min(PROBS_TOP_K, 2**n)
+    best: dict[int, float] = {}
+    size = sim.state.size
+    for s in range(0, size, _SAMPLE_CHUNK):
+        chunk = sim.state[s:s + _SAMPLE_CHUNK]
+        sq = (chunk.real * chunk.real) + (chunk.imag * chunk.imag)
+        kk = min(k, chunk.size)
+        idx_l = xp.argpartition(sq, -kk)[-kk:]
+        vals = to_cpu(sq[idx_l])
+        idxs = to_cpu(idx_l)
+        for i, v in zip(idxs, vals):
+            if v > 1e-12:
+                best[s + int(i)] = float(v)
+    top = sorted(best.items(), key=lambda kv: -kv[1])[:k]
+    return {format(i, f"0{n}b"): p for i, p in top}
 
 
 def _expectations(sim: StatevectorSimulator,

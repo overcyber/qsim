@@ -152,13 +152,14 @@ class Operation(BaseModel):
 
 class CircuitRequest(BaseModel):
     model_config = {"extra": "forbid"}
-    num_qubits: int | None = Field(
-        default=None, ge=1, le=settings.max_qubits
-    )
+    # Teto absoluto de entrada: o limite operacional (QSIM_MAX_QUBITS, ou o
+    # teto Clifford para backend=clifford) e aplicado por validate_circuit.
+    num_qubits: int | None = Field(default=None, ge=1, le=4096)
     shots: int = Field(default=1024, ge=1, le=1_000_000)
     seed: int | None = None
     precision: Literal["complex64", "complex128"] = "complex128"
-    backend: Literal["numpy", "cupy", "custatevec", "aer", "aer-gpu", "auto"] = "auto"
+    backend: Literal["numpy", "cupy", "custatevec", "aer", "aer-gpu",
+                     "clifford", "auto"] = "auto"
     fuse: bool = True
     verify: bool = False
     parallel: bool = True

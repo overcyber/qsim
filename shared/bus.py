@@ -133,22 +133,52 @@ class Bus:
         queue: str,
         durable: str,
         stream: str,
+        ack_wait: float | None = None,
     ):
         """Consome de uma work queue JetStream (ack apos processar).
-        Se JetStream nao estiver disponivel, cai para queue group core."""
-        assert self.nc is not None, "Bus nao conectado"
+
+        ack_wait explicito: sem ele o broker usa ~30s e reentrega jobs longos
+        ENQUANTO ainda executam (execucao duplicada). O worker deve sinalizar
+        progresso periodicamente via o callable `progress` recebido pelo
+        handler (msg.in_progress()), que renova o prazo.
+
+        Se JetStream nao estiver disponivel, cai para queue group core.
+        """
+        assert self.nc is not None
         try:
             js = self.nc.jetstream()
 
             async def _cb(msg) -> None:
+                async def _progress() -> None:
+                    try:
+                        await msg.in_progress()
+                    except Exception:
+                        pass
+
                 try:
-                    await handler(msg.subject, unpack(msg.data))
+                    await handler(msg.subject, unpack(msg.data), _progress)
                 finally:
                     await msg.ack()
 
+            kwargs: dict = {}
+            if ack_wait is not None:
+                from nats.js.api import ConsumerConfig
+                # durable pre-existente mantem o ack_wait ANTIGO: atualizar
+                # a configuracao antes de subscrever (senao jobs longos sao
+                # reentregues mesmo com heartbeat).
+                try:
+                    await js.update_consumer(
+                        stream, ConsumerConfig(
+                            name=durable, ack_wait=ack_wait,
+                            filter_subject=subject,
+                        )
+                    )
+                except Exception:
+                    pass
+                kwargs["config"] = ConsumerConfig(ack_wait=ack_wait)
             return await js.subscribe(
                 subject, queue=queue, durable=durable, stream=stream,
-                cb=_cb, manual_ack=True,
+                cb=_cb, manual_ack=True, **kwargs,
             )
         except Exception:
             return await self.subscribe(subject, handler, queue=queue)

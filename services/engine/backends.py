@@ -93,4 +93,9 @@ def available_backends() -> list[str]:
                 out.append("aer-gpu")
     except Exception:
         pass
+    try:
+        from services.engine.clifford import CLIFFORD_GATES  # noqa: F401
+        out.append("clifford")  # tableau O(n^2): sem limite de statevector
+    except Exception:
+        pass
     return out

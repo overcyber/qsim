@@ -18,4 +18,8 @@ COPY services/__init__.py ./services/__init__.py
 COPY services/engine ./services/engine
 
 ENV PYTHONUNBUFFERED=1
+# P1.5: cache dos kernels CuPy/Numba em volume persistente — elimina a
+# latencia de compilacao JIT a cada reboot do worker.
+ENV CUPY_CACHE_DIR=/cache/cupy \
+    NUMBA_CACHE_DIR=/cache/numba
 CMD ["python3", "-m", "services.engine.worker"]

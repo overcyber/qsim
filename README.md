@@ -5,7 +5,6 @@ microserviços: NATS + MessagePack internamente, console web de pesquisa e
 administração na porta 10000, monitoramento Prometheus/Grafana.
 
 ## Subir o sistema
-
     docker compose up --build                    # CPU (dev)
     docker compose --profile gpu up --build      # com as GPUs (um worker por placa)
     docker compose -f docker-compose.yml -f docker-compose.secure.yml up   # NATS com contas

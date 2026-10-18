@@ -1,0 +1,253 @@
+{
+  "manifesto": {
+    "gerado_em_utc": "2026-10-18T23:12:31+00:00",
+    "git": {
+      "commit": "b0ddca4a63665056ff5dbc7922f3b28b09f4b5dd",
+      "branch": "exp/tema1-canario",
+      "arvore_suja": false
+    },
+    "versoes": {
+      "python": "3.13.16",
+      "numpy": "2.5.4",
+      "qiskit": "2.6.0",
+      "qiskit_aer": "0.17.2"
+    },
+    "plataforma": "Linux x86_64",
+    "sha256": {
+      "experiments/tema1_canario/modelo.py": "be29535e95e888db57c4d170d18c17a6784c9e96c8af03885d42eb4a37f2bd37",
+      "experiments/tema1_canario/detectores.py": "ae415e8441f5be1f387972c021a78e97bf96d8f5ee15bbaef6e2cb98c76333c5",
+      "experiments/tema1_canario/cenarios.py": "7fe065ca32e24e4de2c322beb237aea17f6d87eace74b570a8fb9d46997965b1",
+      "experiments/tema1_canario/piloto_binomial.py": "8e80399b438aa92f6b8c50919dd8fa8af99c71e27c9cbe96f1abdbe958b01452",
+      "experiments/tema1_canario/benchmark_sequencial.py": "2e4c581aa76bdb7a3aaf7b0fc95123f8cc02a6fc8dfbce5063ec167fea44db25",
+      "services/engine/simulator.py": "4ee48a7700ac6af4c831fdc7fdba42922b90b358e62323766a319534c383e1f9",
+      "services/engine/backend_aer.py": "7c3b2b977613000720e595ffd43345471eaaec950f4f2c15d7d16b10d7111545",
+      "services/engine/gates.py": "4612a3cb94579241f148742ad7dc221eaaf5189e21a69231b0caa223c05cc5b8"
+    },
+    "motores_resolvidos": [
+      "aer"
+    ]
+  },
+  "config": {
+    "janelas": 10,
+    "p_fundo": 0.002,
+    "thetas": [
+      0.0,
+      0.02,
+      0.04,
+      0.06,
+      0.1
+    ],
+    "shots_estimativa": 200000,
+    "alfa": 0.01,
+    "n_canario": [
+      500,
+      2000,
+      8000
+    ],
+    "seed_mestre": 20261018,
+    "empirico": {
+      "theta": 0.02,
+      "n_canario": [
+        500,
+        2000
+      ],
+      "replicas": 1000
+    },
+    "backend": "auto"
+  },
+  "pontos": [
+    {
+      "theta": 0.0,
+      "seed": 2818535979,
+      "p1_analitico": 0.013174465818434788,
+      "p1_qsim_exato": 0.013174465818434788,
+      "p1_qsim_amostrado": 0.01322,
+      "z_amostrado_vs_analitico": 0.1785935771488228,
+      "poder": {}
+    },
+    {
+      "theta": 0.02,
+      "seed": 2590630925,
+      "p1_analitico": 0.02287856470893901,
+      "p1_qsim_exato": 0.02287856470893901,
+      "p1_qsim_amostrado": 0.02279,
+      "z_amostrado_vs_analitico": -0.2649030993330215,
+      "poder": {
+        "500": {
+          "normal_piloto": 0.3644723684419675,
+          "binomial_exato": 0.25909969260588184,
+          "limiar_contagem": 14,
+          "tamanho_real": 0.007506272451924205
+        },
+        "2000": {
+          "normal_piloto": 0.8615721477117324,
+          "binomial_exato": 0.8247009465125557,
+          "limiar_contagem": 40,
+          "tamanho_real": 0.007510530247280616
+        },
+        "8000": {
+          "normal_piloto": 0.9999617788848768,
+          "binomial_exato": 0.9999814771610852,
+          "limiar_contagem": 131,
+          "tamanho_real": 0.00844698561572636
+        }
+      }
+    },
+    {
+      "theta": 0.04,
+      "seed": 4169523263,
+      "p1_analitico": 0.05160398958074203,
+      "p1_qsim_exato": 0.05160398958074208,
+      "p1_qsim_amostrado": 0.05219,
+      "z_amostrado_vs_analitico": 1.1846330287645015,
+      "poder": {
+        "500": {
+          "normal_piloto": 0.9967683796630885,
+          "binomial_exato": 0.9964483394527193,
+          "limiar_contagem": 14,
+          "tamanho_real": 0.007506272451924205
+        },
+        "2000": {
+          "normal_piloto": 0.9999999999844509,
+          "binomial_exato": 0.9999999999992241,
+          "limiar_contagem": 40,
+          "tamanho_real": 0.007510530247280616
+        },
+        "8000": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 1.0,
+          "limiar_contagem": 131,
+          "tamanho_real": 0.00844698561572636
+        }
+      }
+    },
+    {
+      "theta": 0.06,
+      "seed": 1819345894,
+      "p1_analitico": 0.09820554839252527,
+      "p1_qsim_exato": 0.09820554839252521,
+      "p1_qsim_amostrado": 0.099135,
+      "z_amostrado_vs_analitico": 1.3967542087188487,
+      "poder": {
+        "500": {
+          "normal_piloto": 0.999999984824612,
+          "binomial_exato": 0.9999999997614353,
+          "limiar_contagem": 14,
+          "tamanho_real": 0.007506272451924205
+        },
+        "2000": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 0.9999999999991306,
+          "limiar_contagem": 40,
+          "tamanho_real": 0.007510530247280616
+        },
+        "8000": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 1.0,
+          "limiar_contagem": 131,
+          "tamanho_real": 0.00844698561572636
+        }
+      }
+    },
+    {
+      "theta": 0.1,
+      "seed": 1652399193,
+      "p1_analitico": 0.23696704132621144,
+      "p1_qsim_exato": 0.23696704132621133,
+      "p1_qsim_amostrado": 0.23652,
+      "z_amostrado_vs_analitico": -0.470161484415926,
+      "poder": {
+        "500": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 0.9999999999999784,
+          "limiar_contagem": 14,
+          "tamanho_real": 0.007506272451924205
+        },
+        "2000": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 0.9999999999992001,
+          "limiar_contagem": 40,
+          "tamanho_real": 0.007510530247280616
+        },
+        "8000": {
+          "normal_piloto": 1.0,
+          "binomial_exato": 1.0,
+          "limiar_contagem": 131,
+          "tamanho_real": 0.00844698561572636
+        }
+      }
+    }
+  ],
+  "empirico": [
+    {
+      "n_canario": 500,
+      "theta": 0.02,
+      "limiar_contagem": 14,
+      "tamanho_teorico": 0.007506272451924205,
+      "poder_teorico": 0.25909969260588184,
+      "falso_positivo_empirico": {
+        "alarmes": 8,
+        "replicas": 1000,
+        "taxa": 0.008,
+        "ic95_wilson": [
+          0.004059195797851703,
+          0.01570633461111126
+        ],
+        "ic999_wilson": [
+          0.0026502553134759455,
+          0.023889946782972703
+        ]
+      },
+      "deteccao_empirica": {
+        "alarmes": 261,
+        "replicas": 1000,
+        "taxa": 0.261,
+        "ic95_wilson": [
+          0.23473118406270493,
+          0.28909800652213674
+        ],
+        "ic999_wilson": [
+          0.2180343158197552,
+          0.3090858230035197
+        ]
+      },
+      "tamanho_dentro_ic999": true,
+      "poder_dentro_ic999": true
+    },
+    {
+      "n_canario": 2000,
+      "theta": 0.02,
+      "limiar_contagem": 40,
+      "tamanho_teorico": 0.007510530247280616,
+      "poder_teorico": 0.8247009465125557,
+      "falso_positivo_empirico": {
+        "alarmes": 9,
+        "replicas": 1000,
+        "taxa": 0.009,
+        "ic95_wilson": [
+          0.004742060644263262,
+          0.017015816247608312
+        ],
+        "ic999_wilson": [
+          0.0031599378355382218,
+          0.02535884108591764
+        ]
+      },
+      "deteccao_empirica": {
+        "alarmes": 849,
+        "replicas": 1000,
+        "taxa": 0.849,
+        "ic95_wilson": [
+          0.825475043012328,
+          0.8698538795227774
+        ],
+        "ic999_wilson": [
+          0.80801665600963,
+          0.8825066559178891
+        ]
+      },
+      "tamanho_dentro_ic999": true,
+      "poder_dentro_ic999": true
+    }
+  ]
+}

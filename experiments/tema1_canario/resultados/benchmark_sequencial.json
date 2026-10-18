@@ -1,0 +1,445 @@
+{
+  "manifesto": {
+    "gerado_em_utc": "2026-10-18T23:12:40+00:00",
+    "git": {
+      "commit": "b0ddca4a63665056ff5dbc7922f3b28b09f4b5dd",
+      "branch": "exp/tema1-canario",
+      "arvore_suja": false
+    },
+    "versoes": {
+      "python": "3.13.16",
+      "numpy": "2.5.4",
+      "qiskit": "2.6.0",
+      "qiskit_aer": "0.17.2"
+    },
+    "plataforma": "Linux x86_64",
+    "sha256": {
+      "experiments/tema1_canario/modelo.py": "be29535e95e888db57c4d170d18c17a6784c9e96c8af03885d42eb4a37f2bd37",
+      "experiments/tema1_canario/detectores.py": "ae415e8441f5be1f387972c021a78e97bf96d8f5ee15bbaef6e2cb98c76333c5",
+      "experiments/tema1_canario/cenarios.py": "7fe065ca32e24e4de2c322beb237aea17f6d87eace74b570a8fb9d46997965b1",
+      "experiments/tema1_canario/piloto_binomial.py": "8e80399b438aa92f6b8c50919dd8fa8af99c71e27c9cbe96f1abdbe958b01452",
+      "experiments/tema1_canario/benchmark_sequencial.py": "2e4c581aa76bdb7a3aaf7b0fc95123f8cc02a6fc8dfbce5063ec167fea44db25",
+      "services/engine/simulator.py": "4ee48a7700ac6af4c831fdc7fdba42922b90b358e62323766a319534c383e1f9",
+      "services/engine/backend_aer.py": "7c3b2b977613000720e595ffd43345471eaaec950f4f2c15d7d16b10d7111545",
+      "services/engine/gates.py": "4612a3cb94579241f148742ad7dc221eaaf5189e21a69231b0caa223c05cc5b8"
+    }
+  },
+  "config": {
+    "janelas_ociosas": 10,
+    "p_fundo": 0.002,
+    "n_shots": 500,
+    "W": 300,
+    "tau": 100,
+    "inicio": 50,
+    "delta": 0.25,
+    "janela_ref": 40,
+    "defasagem": 10,
+    "fap": 0.05,
+    "replicas_calibracao": 4000,
+    "replicas_teste": 4000,
+    "seed_mestre": 20261018,
+    "fonte_fisica": "qsim_exato"
+  },
+  "cenarios": {
+    "S0": {
+      "descricao": "estacionario, sem ataque",
+      "parametros": {
+        "nome": "S0",
+        "descricao": "estacionario, sem ataque",
+        "deriva": 0.0,
+        "kappa": 1.0,
+        "ataque": "nenhum",
+        "theta": 0.0,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.013174465818434788,
+      "p1_referencia_fim": 0.013174465818434788
+    },
+    "S1": {
+      "descricao": "deriva de 50% comum aos canarios, sem ataque",
+      "parametros": {
+        "nome": "S1",
+        "descricao": "deriva de 50% comum aos canarios, sem ataque",
+        "deriva": 0.5,
+        "kappa": 1.0,
+        "ataque": "nenhum",
+        "theta": 0.0,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.019643813248594932,
+      "p1_referencia_fim": 0.019643813248594932
+    },
+    "S2": {
+      "descricao": "deriva de 50% com descasamento (referencia deriva 50% menos), sem ataque",
+      "parametros": {
+        "nome": "S2",
+        "descricao": "deriva de 50% com descasamento (referencia deriva 50% menos), sem ataque",
+        "deriva": 0.5,
+        "kappa": 0.5,
+        "ataque": "nenhum",
+        "theta": 0.0,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.019643813248594932,
+      "p1_referencia_fim": 0.016418875977633918
+    },
+    "S3": {
+      "descricao": "ataque constante theta=0.01, estacionario",
+      "parametros": {
+        "nome": "S3",
+        "descricao": "ataque constante theta=0.01, estacionario",
+        "deriva": 0.0,
+        "kappa": 1.0,
+        "ataque": "constante",
+        "theta": 0.01,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.01560656572564273,
+      "p1_referencia_fim": 0.013174465818434788
+    },
+    "S4": {
+      "descricao": "ataque constante theta=0.01 com deriva comum de 50%",
+      "parametros": {
+        "nome": "S4",
+        "descricao": "ataque constante theta=0.01 com deriva comum de 50%",
+        "deriva": 0.5,
+        "kappa": 1.0,
+        "ataque": "constante",
+        "theta": 0.01,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.022043593365282776,
+      "p1_referencia_fim": 0.019643813248594932
+    },
+    "S5": {
+      "descricao": "ataque em rampa ate theta=0.03 com deriva comum de 50%",
+      "parametros": {
+        "nome": "S5",
+        "descricao": "ataque em rampa ate theta=0.03 com deriva comum de 50%",
+        "deriva": 0.5,
+        "kappa": 1.0,
+        "ataque": "rampa",
+        "theta": 0.03,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.041098207019148514,
+      "p1_referencia_fim": 0.019643813248594932
+    },
+    "S6": {
+      "descricao": "ataque intermitente theta=0.03, 25% de um periodo de 20 janelas, estacionario",
+      "parametros": {
+        "nome": "S6",
+        "descricao": "ataque intermitente theta=0.03, 25% de um periodo de 20 janelas, estacionario",
+        "deriva": 0.0,
+        "kappa": 1.0,
+        "ataque": "intermitente",
+        "theta": 0.03,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.013174465818434788,
+      "p1_referencia_fim": 0.013174465818434788
+    },
+    "S7": {
+      "descricao": "ataque em rampa lenta ate theta=0.015, estacionario (atacante que tenta treinar referencias moveis)",
+      "parametros": {
+        "nome": "S7",
+        "descricao": "ataque em rampa lenta ate theta=0.015, estacionario (atacante que tenta treinar referencias moveis)",
+        "deriva": 0.0,
+        "kappa": 1.0,
+        "ataque": "rampa",
+        "theta": 0.015,
+        "periodo": 20,
+        "fracao_ativa": 0.25
+      },
+      "p1_proximo_inicio": 0.013174465818434788,
+      "p1_proximo_fim": 0.01864099180050366,
+      "p1_referencia_fim": 0.013174465818434788
+    }
+  },
+  "limiares": {
+    "shewhart": 4.296622753083832,
+    "cusum": 9.334336388543802,
+    "cusum_movel": 7.108541268485995,
+    "cusum_diferencial": 5.344846789273479
+  },
+  "resultados": [
+    {
+      "cenario": "S0",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme": 0.04875,
+      "alarme_pos_tau": 0.04025
+    },
+    {
+      "cenario": "S0",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme": 0.04275,
+      "alarme_pos_tau": 0.03875
+    },
+    {
+      "cenario": "S0",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme": 0.0515,
+      "alarme_pos_tau": 0.04675
+    },
+    {
+      "cenario": "S0",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme": 0.04475,
+      "alarme_pos_tau": 0.04275
+    },
+    {
+      "cenario": "S1",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme": 0.47575,
+      "alarme_pos_tau": 0.445
+    },
+    {
+      "cenario": "S1",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme": 0.99825,
+      "alarme_pos_tau": 0.94475
+    },
+    {
+      "cenario": "S1",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme": 0.25475,
+      "alarme_pos_tau": 0.2185
+    },
+    {
+      "cenario": "S1",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme": 0.05925,
+      "alarme_pos_tau": 0.055
+    },
+    {
+      "cenario": "S2",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme": 0.4815,
+      "alarme_pos_tau": 0.4575
+    },
+    {
+      "cenario": "S2",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme": 0.99725,
+      "alarme_pos_tau": 0.94475
+    },
+    {
+      "cenario": "S2",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme": 0.25525,
+      "alarme_pos_tau": 0.21625
+    },
+    {
+      "cenario": "S2",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme": 0.8835,
+      "alarme_pos_tau": 0.857
+    },
+    {
+      "cenario": "S3",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme_pre": 0.011,
+      "deteccao": 0.21775,
+      "atraso_mediano": 91.0,
+      "atraso_p90": 176.0
+    },
+    {
+      "cenario": "S3",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme_pre": 0.0025,
+      "deteccao": 0.825,
+      "atraso_mediano": 56.0,
+      "atraso_p90": 134.0
+    },
+    {
+      "cenario": "S3",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme_pre": 0.0075,
+      "deteccao": 0.31225,
+      "atraso_mediano": 24.0,
+      "atraso_p90": 53.0
+    },
+    {
+      "cenario": "S3",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme_pre": 0.00275,
+      "deteccao": 0.9565,
+      "atraso_mediano": 63.0,
+      "atraso_p90": 136.0
+    },
+    {
+      "cenario": "S4",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme_pre": 0.0275,
+      "deteccao": 0.81725,
+      "atraso_mediano": 100.0,
+      "atraso_p90": 176.0
+    },
+    {
+      "cenario": "S4",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme_pre": 0.04875,
+      "deteccao": 0.95125,
+      "atraso_mediano": 23.0,
+      "atraso_p90": 47.0
+    },
+    {
+      "cenario": "S4",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme_pre": 0.03725,
+      "deteccao": 0.59775,
+      "atraso_mediano": 23.0,
+      "atraso_p90": 84.0
+    },
+    {
+      "cenario": "S4",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme_pre": 0.00375,
+      "deteccao": 0.87175,
+      "atraso_mediano": 68.0,
+      "atraso_p90": 150.0
+    },
+    {
+      "cenario": "S5",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme_pre": 0.0215,
+      "deteccao": 0.9785,
+      "atraso_mediano": 99.0,
+      "atraso_p90": 127.0
+    },
+    {
+      "cenario": "S5",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme_pre": 0.0465,
+      "deteccao": 0.9535,
+      "atraso_mediano": 52.0,
+      "atraso_p90": 75.0
+    },
+    {
+      "cenario": "S5",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme_pre": 0.03375,
+      "deteccao": 0.96625,
+      "atraso_mediano": 89.0,
+      "atraso_p90": 121.59999999999991
+    },
+    {
+      "cenario": "S5",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme_pre": 0.0035,
+      "deteccao": 0.9965,
+      "atraso_mediano": 97.0,
+      "atraso_p90": 117.0
+    },
+    {
+      "cenario": "S6",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme_pre": 0.00875,
+      "deteccao": 0.99125,
+      "atraso_mediano": 1.0,
+      "atraso_p90": 3.0
+    },
+    {
+      "cenario": "S6",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme_pre": 0.00325,
+      "deteccao": 0.99675,
+      "atraso_mediano": 3.0,
+      "atraso_p90": 10.0
+    },
+    {
+      "cenario": "S6",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme_pre": 0.00525,
+      "deteccao": 0.99475,
+      "atraso_mediano": 2.0,
+      "atraso_p90": 4.0
+    },
+    {
+      "cenario": "S6",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme_pre": 0.00475,
+      "deteccao": 0.99525,
+      "atraso_mediano": 4.0,
+      "atraso_p90": 23.0
+    },
+    {
+      "cenario": "S7",
+      "detector": "shewhart",
+      "limiar": 4.296622753083832,
+      "falso_alarme_pre": 0.00825,
+      "deteccao": 0.24925,
+      "atraso_mediano": 165.0,
+      "atraso_p90": 195.0
+    },
+    {
+      "cenario": "S7",
+      "detector": "cusum",
+      "limiar": 9.334336388543802,
+      "falso_alarme_pre": 0.00325,
+      "deteccao": 0.92825,
+      "atraso_mediano": 158.0,
+      "atraso_p90": 187.0
+    },
+    {
+      "cenario": "S7",
+      "detector": "cusum_movel",
+      "limiar": 7.108541268485995,
+      "falso_alarme_pre": 0.0065,
+      "deteccao": 0.28975,
+      "atraso_mediano": 152.0,
+      "atraso_p90": 190.20000000000005
+    },
+    {
+      "cenario": "S7",
+      "detector": "cusum_diferencial",
+      "limiar": 5.344846789273479,
+      "falso_alarme_pre": 0.00525,
+      "deteccao": 0.956,
+      "atraso_mediano": 157.0,
+      "atraso_p90": 186.0
+    }
+  ]
+}

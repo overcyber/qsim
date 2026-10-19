@@ -1,8 +1,8 @@
 {
   "manifesto": {
-    "gerado_em_utc": "2026-10-19T01:29:26+00:00",
+    "gerado_em_utc": "2026-10-19T01:40:49+00:00",
     "git": {
-      "commit": "259a4b568b8d384968ecc1e0155db8965d866c1a",
+      "commit": "ccce473cd4f8530f4458a48036be74baab16548d",
       "branch": "exp/tema1-canario",
       "arvore_suja": false
     },
@@ -14,13 +14,13 @@
     },
     "plataforma": "Linux x86_64",
     "sha256": {
-      "experiments/tema1_canario/modelo.py": "be29535e95e888db57c4d170d18c17a6784c9e96c8af03885d42eb4a37f2bd37",
+      "experiments/tema1_canario/modelo.py": "38ce13c1e6fa4121ab1ffcf10d7770de155c2fde72e3c8929e5a50cd2b5f7364",
       "experiments/tema1_canario/detectores.py": "75db687648677b633937213fa1ff171d08d8556b1c4af13d19dce2ce9b4cf1cd",
       "experiments/tema1_canario/cenarios.py": "7fe065ca32e24e4de2c322beb237aea17f6d87eace74b570a8fb9d46997965b1",
       "experiments/tema1_canario/piloto_binomial.py": "8e80399b438aa92f6b8c50919dd8fa8af99c71e27c9cbe96f1abdbe958b01452",
       "experiments/tema1_canario/benchmark_sequencial.py": "2e4c581aa76bdb7a3aaf7b0fc95123f8cc02a6fc8dfbce5063ec167fea44db25",
-      "services/engine/simulator.py": "4ee48a7700ac6af4c831fdc7fdba42922b90b358e62323766a319534c383e1f9",
-      "services/engine/backend_aer.py": "7c3b2b977613000720e595ffd43345471eaaec950f4f2c15d7d16b10d7111545",
+      "services/engine/simulator.py": "2ccd5c688becd95509df85934dbb387eb45c1fa53d69adc12fa320bf90d092cf",
+      "services/engine/backend_aer.py": "da4cab23edc3058e8ab45de35e5cf049b405f0a65d9a02de614aeaf8f1037837",
       "services/engine/gates.py": "4612a3cb94579241f148742ad7dc221eaaf5189e21a69231b0caa223c05cc5b8"
     },
     "motores_resolvidos": [

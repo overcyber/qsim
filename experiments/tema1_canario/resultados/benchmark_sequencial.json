@@ -1,10 +1,10 @@
 {
   "manifesto": {
-    "gerado_em_utc": "2026-10-18T23:12:40+00:00",
+    "gerado_em_utc": "2026-10-19T01:29:34+00:00",
     "git": {
-      "commit": "b0ddca4a63665056ff5dbc7922f3b28b09f4b5dd",
+      "commit": "259a4b568b8d384968ecc1e0155db8965d866c1a",
       "branch": "exp/tema1-canario",
-      "arvore_suja": false
+      "arvore_suja": true
     },
     "versoes": {
       "python": "3.13.16",
@@ -15,7 +15,7 @@
     "plataforma": "Linux x86_64",
     "sha256": {
       "experiments/tema1_canario/modelo.py": "be29535e95e888db57c4d170d18c17a6784c9e96c8af03885d42eb4a37f2bd37",
-      "experiments/tema1_canario/detectores.py": "ae415e8441f5be1f387972c021a78e97bf96d8f5ee15bbaef6e2cb98c76333c5",
+      "experiments/tema1_canario/detectores.py": "75db687648677b633937213fa1ff171d08d8556b1c4af13d19dce2ce9b4cf1cd",
       "experiments/tema1_canario/cenarios.py": "7fe065ca32e24e4de2c322beb237aea17f6d87eace74b570a8fb9d46997965b1",
       "experiments/tema1_canario/piloto_binomial.py": "8e80399b438aa92f6b8c50919dd8fa8af99c71e27c9cbe96f1abdbe958b01452",
       "experiments/tema1_canario/benchmark_sequencial.py": "2e4c581aa76bdb7a3aaf7b0fc95123f8cc02a6fc8dfbce5063ec167fea44db25",
@@ -174,7 +174,8 @@
     "shewhart": 4.296622753083832,
     "cusum": 9.334336388543802,
     "cusum_movel": 7.108541268485995,
-    "cusum_diferencial": 5.344846789273479
+    "cusum_diferencial": 5.344846789273479,
+    "cusum_diferencial_calibrado": 9.823514230974109
   },
   "resultados": [
     {
@@ -206,6 +207,13 @@
       "alarme_pos_tau": 0.04275
     },
     {
+      "cenario": "S0",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme": 0.04725,
+      "alarme_pos_tau": 0.04725
+    },
+    {
       "cenario": "S1",
       "detector": "shewhart",
       "limiar": 4.296622753083832,
@@ -234,6 +242,13 @@
       "alarme_pos_tau": 0.055
     },
     {
+      "cenario": "S1",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme": 0.06275,
+      "alarme_pos_tau": 0.062
+    },
+    {
       "cenario": "S2",
       "detector": "shewhart",
       "limiar": 4.296622753083832,
@@ -260,6 +275,13 @@
       "limiar": 5.344846789273479,
       "falso_alarme": 0.8835,
       "alarme_pos_tau": 0.857
+    },
+    {
+      "cenario": "S2",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme": 0.39625,
+      "alarme_pos_tau": 0.39525
     },
     {
       "cenario": "S3",
@@ -298,6 +320,15 @@
       "atraso_p90": 136.0
     },
     {
+      "cenario": "S3",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme_pre": 0.00025,
+      "deteccao": 0.5855,
+      "atraso_mediano": 89.0,
+      "atraso_p90": 165.0
+    },
+    {
       "cenario": "S4",
       "detector": "shewhart",
       "limiar": 4.296622753083832,
@@ -332,6 +363,15 @@
       "deteccao": 0.87175,
       "atraso_mediano": 68.0,
       "atraso_p90": 150.0
+    },
+    {
+      "cenario": "S4",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme_pre": 0.00025,
+      "deteccao": 0.46875,
+      "atraso_mediano": 85.0,
+      "atraso_p90": 160.60000000000014
     },
     {
       "cenario": "S5",
@@ -370,6 +410,15 @@
       "atraso_p90": 117.0
     },
     {
+      "cenario": "S5",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme_pre": 0.0005,
+      "deteccao": 0.9995,
+      "atraso_mediano": 117.0,
+      "atraso_p90": 143.0
+    },
+    {
       "cenario": "S6",
       "detector": "shewhart",
       "limiar": 4.296622753083832,
@@ -406,6 +455,15 @@
       "atraso_p90": 23.0
     },
     {
+      "cenario": "S6",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme_pre": 0.00075,
+      "deteccao": 0.9935,
+      "atraso_mediano": 24.0,
+      "atraso_p90": 63.0
+    },
+    {
       "cenario": "S7",
       "detector": "shewhart",
       "limiar": 4.296622753083832,
@@ -440,6 +498,15 @@
       "deteccao": 0.956,
       "atraso_mediano": 157.0,
       "atraso_p90": 186.0
+    },
+    {
+      "cenario": "S7",
+      "detector": "cusum_diferencial_calibrado",
+      "limiar": 9.823514230974109,
+      "falso_alarme_pre": 0.0005,
+      "deteccao": 0.59175,
+      "atraso_mediano": 170.0,
+      "atraso_p90": 194.0
     }
   ]
 }

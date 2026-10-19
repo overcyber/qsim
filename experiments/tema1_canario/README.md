@@ -32,27 +32,31 @@ sem ruído próprio; shots independentes entre si.
 |---|---|
 | `modelo.py` | circuito do canário e P(1) por três fontes independentes |
 | `piloto_binomial.py` | reprodução versionada do piloto de 18/10/2026 |
-| `detectores.py` | Shewhart, CUSUM, CUSUM com referência móvel, CUSUM diferencial |
+| `detectores.py` | Shewhart, CUSUM, CUSUM com referência móvel, CUSUM diferencial e diferencial calibrado |
 | `cenarios.py` | deriva de calibração, descasamento de deriva e perfis de atacante |
 | `benchmark_sequencial.py` | calibração, avaliação e métricas dos detectores |
 | `manifesto.py` | proveniência anexada a todo resultado |
+| `viabilidade.py` | critérios C1 a C5 de viabilidade do artigo |
+| `calibracao/` | coleta e análise do histórico de calibração da IBM e benchmark empírico |
 | `resultados/` | referências gravadas (JSON e CSV) |
 
 ## Como reproduzir
 
     PYTHONPATH=. python3 tests/test_tema1_canario.py
+    PYTHONPATH=. python3 tests/test_tema1_calibracao.py
     PYTHONPATH=. python3 experiments/tema1_canario/piloto_binomial.py --verificar
     PYTHONPATH=. python3 experiments/tema1_canario/benchmark_sequencial.py --verificar
 
-Sem `--verificar`, os scripts regravam a referência. As três linhas acima
-rodam no CI.
+Sem `--verificar`, os scripts regravam a referência. As quatro linhas acima
+rodam no CI. O veredito de viabilidade sai de
+`PYTHONPATH=. python3 experiments/tema1_canario/viabilidade.py`.
 
 **Protocolo de proveniência.** O código é commitado primeiro; as
 referências são geradas com a árvore limpa e commitadas em seguida. Cada
 JSON traz um manifesto com commit, branch, estado da árvore, versões de
 Python, numpy, qiskit e qiskit-aer, plataforma e SHA-256 dos arquivos do
 experimento e do motor. As referências atuais foram geradas no commit
-`b0ddca4`, com qiskit-aer 0.17.2 e numpy 2.5.4.
+`259a4b5`, com qiskit-aer 0.17.2 e numpy 2.5.4.
 
 **Critério de verificação.** O piloto reproduz bit a bit com o mesmo
 motor e a mesma versão do qiskit-aer; em outro ambiente, exige amostras a
@@ -84,26 +88,26 @@ no horizonte em 4000 réplicas independentes das 4000 de avaliação.
 
 Falso alarme sem ataque:
 
-| Cenário | Shewhart | CUSUM | CUSUM móvel | CUSUM diferencial |
-|---|---|---|---|---|
-| S0 estacionário | 0,049 | 0,043 | 0,051 | 0,045 |
-| S1 deriva comum de 50% | 0,476 | 0,998 | 0,255 | 0,059 |
-| S2 deriva descasada (κ = 0,5) | 0,481 | 0,997 | 0,255 | 0,883 |
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Diferencial calibrado |
+|---|---|---|---|---|---|
+| S0 estacionário | 0,049 | 0,043 | 0,051 | 0,045 | 0,047 |
+| S1 deriva comum de 50% | 0,476 | 0,998 | 0,255 | 0,059 | 0,063 |
+| S2 deriva descasada (κ = 0,5) | 0,481 | 0,997 | 0,255 | 0,883 | 0,396 |
 
 Detecção com ataque (atraso mediano em janelas):
 
-| Cenário | Shewhart | CUSUM | CUSUM móvel | CUSUM diferencial |
-|---|---|---|---|---|
-| S3 constante θ = 0,01 | 0,218 (91) | 0,825 (56) | 0,312 (24) | 0,957 (63) |
-| S4 constante θ = 0,01 com deriva | 0,817 (100) | 0,951 (23) | 0,598 (23) | 0,872 (68) |
-| S5 rampa até θ = 0,03 com deriva | 0,979 (99) | 0,954 (52) | 0,966 (89) | 0,997 (97) |
-| S6 intermitente θ = 0,03 | 0,991 (1) | 0,997 (3) | 0,995 (2) | 0,995 (4) |
-| S7 rampa lenta até θ = 0,015 | 0,249 (165) | 0,928 (158) | 0,290 (152) | 0,956 (157) |
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Diferencial calibrado |
+|---|---|---|---|---|---|
+| S3 constante θ = 0,01 | 0,218 (91) | 0,825 (56) | 0,312 (24) | 0,957 (63) | 0,586 (89) |
+| S4 constante θ = 0,01 com deriva | 0,817 (100) | 0,951 (23) | 0,598 (23) | 0,872 (68) | 0,469 (85) |
+| S5 rampa até θ = 0,03 com deriva | 0,979 (99) | 0,954 (52) | 0,966 (89) | 0,997 (97) | 1,000 (117) |
+| S6 intermitente θ = 0,03 | 0,991 (1) | 0,997 (3) | 0,995 (2) | 0,995 (4) | 0,994 (24) |
+| S7 rampa lenta até θ = 0,015 | 0,249 (165) | 0,928 (158) | 0,290 (152) | 0,956 (157) | 0,592 (170) |
 
 Sob deriva, a detecção bruta se confunde com o falso alarme da própria
 deriva. A detecção atribuível ao ataque em S4 (S4 menos o alarme pós-τ de
-S1) é 0,37 no Shewhart, 0,01 no CUSUM, 0,38 no CUSUM móvel e 0,82 no CUSUM
-diferencial.
+S1) é:
+Shewhart 0,372, CUSUM 0,007, CUSUM móvel 0,379, diferencial 0,817, diferencial calibrado 0,407.
 
 ### Leitura
 
@@ -116,11 +120,51 @@ diferencial.
    quando os qubits derivam de forma diferente (88% de falso alarme em S2).
    Medir o descasamento real de deriva entre qubits vizinhos e distantes, e
    construir um detector robusto a ele, é o problema central do artigo.
+4. O diferencial original supõe que os dois canários têm a mesma base de
+   ruído, o que não vale entre qubits reais. A versão calibrada estima a
+   razão de base e reduz o falso alarme sob deriva descasada (40% contra
+   88%), ao custo de poder contra a rampa lenta (59% contra 96%).
+
+## Calibração real da IBM
+
+O pipeline em `calibracao/` substitui a deriva e o κ hipotéticos por dados
+de calibração de um processador real.
+
+1. Coleta (com a sua conta na IBM Quantum Platform; o plano aberto basta).
+   Retomável: pode ser interrompida e rodada de novo.
+
+        pip install qiskit-ibm-runtime
+        PYTHONPATH=. python3 experiments/tema1_canario/calibracao/coletar_ibm.py \
+            --backend ibm_torino --dias 90
+
+2. Análise: deriva entre calibrações, fração de modo comum e κ por
+   distância no chip, com IC por bootstrap.
+
+        PYTHONPATH=. python3 experiments/tema1_canario/calibracao/analisar_deriva.py \
+            --backend ibm_torino
+
+3. Benchmark empírico: cada réplica sorteia um par real de qubits e uma
+   transição real entre calibrações.
+
+        PYTHONPATH=. python3 experiments/tema1_canario/calibracao/benchmark_empirico.py \
+            --backend ibm_torino
+
+A conversão de T1/T2 em ruído do canário iguala a fidelidade média do
+relaxamento à do depolarizante (conferida contra o canal de relaxação
+térmica do Qiskit a 1e-12). A análise recupera o κ verdadeiro de um
+histórico sintético em todas as distâncias
+(`tests/test_tema1_calibracao.py`). Pelo que se encontrou na literatura,
+as flutuações de T1 em processadores IBM são da ordem de 20% da média e
+atribuídas a defeitos locais, mas a correlação entre qubits não foi
+medida ([Carroll et al., npj QI 2022](https://link.springer.com/article/10.1038/s41534-022-00643-y)).
+
+Limitação: a calibração da IBM é diária, então o pipeline mede deriva na
+escala de dias. Deriva dentro do dia exige rodar canários no hardware.
 
 ## Limitações e próximos passos
 
-- Estimar deriva e descasamento (κ) a partir de séries de calibração
-  publicadas pela IBM, em vez de fixá-los.
+- Rodar a coleta em pelo menos um processador de 127 ou 133 qubits por 90
+  dias e repetir o benchmark com os parâmetros medidos.
 - Acrescentar dephasing e relaxação térmica T1/T2 ao QSim e repetir o
   benchmark com o ruído de fundo justificado fisicamente.
 - Atacante adaptativo contra o detector diferencial (atingir também a

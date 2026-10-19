@@ -1,8 +1,8 @@
 {
   "manifesto": {
-    "gerado_em_utc": "2026-10-19T21:55:29+00:00",
+    "gerado_em_utc": "2026-10-19T21:58:49+00:00",
     "git": {
-      "commit": "b290a4afb131e48f458d2c5c79151dc23a86435d",
+      "commit": "25034bedd2f622ad6342c15ffa25d804ad77a677",
       "branch": "exp/tema1-canario",
       "arvore_suja": true
     },

@@ -57,7 +57,7 @@ referências são geradas com a árvore limpa e commitadas em seguida. Cada
 JSON traz um manifesto com commit, branch, estado da árvore, versões de
 Python, numpy, qiskit e qiskit-aer, plataforma e SHA-256 dos arquivos do
 experimento e do motor. As referências atuais foram geradas no commit
-`b290a4a`, com qiskit-aer 0.17.2 e numpy 2.5.4.
+`25034be`, com qiskit-aer 0.17.2 e numpy 2.5.4.
 
 **Critério de verificação.** O piloto reproduz bit a bit com o mesmo
 motor e a mesma versão do qiskit-aer; em outro ambiente, exige amostras a

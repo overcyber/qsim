@@ -21,10 +21,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from experiments.tema1_canario import benchmark_sequencial as bench
 from experiments.tema1_canario.cenarios import (Cenario, amostrar,
                                                 probabilidades,
+                                                probabilidades_multi,
                                                 theta_por_janela)
-from experiments.tema1_canario.detectores import (_cusum, calibrar_limiar,
-                                                  cusum_diferencial,
-                                                  primeiro_alarme)
+from experiments.tema1_canario.detectores import (
+    _cusum, alocacao_multicomprimento, calibrar_limiar, cusum_diferencial,
+    cusum_multicomprimento, primeiro_alarme, theta_projeto)
 from experiments.tema1_canario.modelo import (ModeloCanario, p1_analitico,
                                               p1_qsim_amostrado, p1_qsim_exato)
 from experiments.tema1_canario.piloto_binomial import (cauda_superior,
@@ -83,6 +84,56 @@ def test_diferencial_invariante_a_deriva_comum() -> None:
           "qualquer nivel de ruido comum")
 
 
+def test_segunda_diferenca_cancela_leitura_e_decoerencia() -> None:
+    """Sem amostragem: D = log c0 - 2 log c1 + log c2 com c = 1 - 2 P medido
+    vale exatamente log cos(2 L th) - 2 log cos(L th) para qualquer ruido de
+    fundo e erro de leitura, e P de cada comprimento vem da matriz
+    densidade do QSim."""
+    modelo = ModeloCanario(10, "qsim_exato")
+    L = 30
+    for th in (0.0, 0.004, 0.01):
+        esperado = np.log(np.cos(2 * L * th)) - 2 * np.log(np.cos(L * th))
+        for p in (0.001, 0.002, 0.004):
+            for e in (0.0, 0.01, 0.03):
+                c = [1 - 2 * modelo.p1(th, p, janelas=m, leitura=e)
+                     for m in (0, L, 2 * L)]
+                D = np.log(c[0]) - 2 * np.log(c[1]) + np.log(c[2])
+                assert abs(D - esperado) < 1e-12, (th, p, e, D, esperado)
+    print("[ok] segunda diferenca: independe do ruido de fundo e da leitura "
+          "(1e-12), so o termo coerente sobra")
+
+
+def test_multicomprimento_robusto_a_deriva_incoerente() -> None:
+    """Deriva de 100% no ruido e na leitura sem ataque nao dispara mais que
+    o nominal; o ataque constante e detectado."""
+    cfg = {**bench.CONFIG, "replicas_calibracao": 1500,
+           "replicas_teste": 1500}
+    modelo = ModeloCanario(10, "analitico")
+    comp = cfg["comprimentos_multi"]
+    nm = alocacao_multicomprimento(comp, cfg["p_fundo"], 0.01, 500)
+    assert sum(nm) == 500
+    thp = theta_projeto(cfg["p_fundo"], 10, cfg["delta"])
+    W, tau, ini = cfg["W"], cfg["tau"], cfg["inicio"]
+    rng = np.random.default_rng(8)
+
+    def escore(cen):
+        pm = probabilidades_multi(cen, modelo, cfg["p_fundo"], W, tau, comp)
+        mm = [amostrar(p, n, 1500, rng) for p, n in zip(pm, nm)]
+        return cusum_multicomprimento(mm[1], 500, ini, cfg["delta"], multi=mm,
+                                      n_multi=nm, comprimentos=comp,
+                                      theta_proj=thp)
+
+    h = calibrar_limiar(escore(Cenario("H0", "")), ini, 0.05)
+    fa = np.mean(primeiro_alarme(escore(Cenario(
+        "D", "", deriva=1.0, deriva_leitura=1.0)), h, ini) >= 0)
+    det = np.mean(primeiro_alarme(escore(Cenario(
+        "A", "", ataque="constante", theta=0.01)), h, ini) >= tau)
+    assert fa < 0.10, fa
+    assert det > 0.9, det
+    print(f"[ok] multicomprimento: falso alarme {fa:.3f} com deriva de 100% "
+          f"no ruido e na leitura; deteccao {det:.3f} do ataque theta=0,01")
+
+
 def _cfg_pequena() -> dict:
     cfg = dict(bench.CONFIG)
     cfg["replicas_calibracao"] = 2000
@@ -112,10 +163,14 @@ def test_rampa_lenta_absorvida_pela_referencia_movel() -> None:
     res = bench.executar(_cfg_pequena(), cen)
     det = {r["detector"]: r["deteccao"] for r in res["resultados"]
            if r["cenario"] == "S7"}
+    # com 1% de erro de leitura o sinal e diluido; a propriedade testada e
+    # a absorcao da rampa pela referencia movel, nao o nivel absoluto
     assert det["cusum_movel"] < 0.5, det
-    assert det["cusum_diferencial"] > 0.8, det
+    assert det["cusum_diferencial"] > det["cusum_movel"] + 0.3, det
+    assert det["cusum_multicomprimento"] > 0.9, det
     print(f"[ok] rampa lenta: referencia movel detecta "
-          f"{det['cusum_movel']:.2f}, diferencial {det['cusum_diferencial']:.2f}")
+          f"{det['cusum_movel']:.2f}, diferencial {det['cusum_diferencial']:.2f}, "
+          f"multicomprimento {det['cusum_multicomprimento']:.2f}")
 
 
 def test_perfis_de_ataque() -> None:

@@ -25,6 +25,18 @@ probabilidade de falso alarme fixa no horizonte (calibrar_limiar).
                     o mesmo, com a razao de base entre os canarios
                     estimada na calibracao (qubits reais tem bases
                     diferentes; sem isso o diferencial dispara sem ataque).
+  cusum_multicomprimento
+                    proposto. Um so qubit, canarios de comprimentos
+                    m0 < m1 < m2 igualmente espacados (ex.: 0, 30, 60
+                    janelas) dividindo os mesmos n shots. Com coerencia
+                    c_m = 1 - 2 P_m = A r^m cos(m theta), log c_m e afim em m
+                    para qualquer A (leitura) e r (decoerencia); a segunda
+                    diferenca D = log c0 - 2 log c1 + log c2 cancela os dois
+                    e fica so com o termo coerente, ~ -(m1 - m0)^2 theta^2.
+                    CUSUM gaussiano sobre -D, com variancia e vies de
+                    segunda ordem estimados numa janela movel. Nao usa
+                    referencia; nao distingue o ataque de outro
+                    deslocamento coerente de fase (dessintonia, ZZ legitimo).
 """
 from __future__ import annotations
 
@@ -110,13 +122,97 @@ def cusum_diferencial_calibrado(c: np.ndarray, n: int, inicio: int,
     return _cusum(llr, inicio)
 
 
+def theta_projeto(p_fundo: float, janelas: int, delta: float) -> float:
+    """Rotacao por janela que aumenta P(1) do canario de `janelas` em
+    (1 + delta): o mesmo ponto de projeto dos CUSUM de base fixa."""
+    r = (1 - 4 * p_fundo / 3) ** janelas
+    p0 = (1 - r) / 2
+    return float(np.arccos((1 - 2 * (1 + delta) * p0) / r) / janelas)
+
+
+def _var_log_coerencia(p1: np.ndarray, n: np.ndarray | int) -> np.ndarray:
+    c = 1 - 2 * p1
+    return 4 * p1 * (1 - p1) / (n * c * c)
+
+
+def alocacao_multicomprimento(comprimentos: list[int], p_fundo: float,
+                              leitura: float, total: int) -> list[int]:
+    """Shots por comprimento que minimizam Var(D) no ponto nominal:
+    n_m proporcional a |w_m| sqrt(v_m), pesos (1, -2, 1)."""
+    pesos = np.array([1.0, 2.0, 1.0])
+    p1 = np.array([leitura + (1 - 2 * leitura)
+                   * (1 - (1 - 4 * p_fundo / 3) ** m) / 2
+                   for m in comprimentos])
+    frac = pesos * np.sqrt(_var_log_coerencia(p1, 1))
+    frac /= frac.sum()
+    n = np.floor(frac * total).astype(int)
+    n[np.argmax(frac)] += total - n.sum()
+    return [int(x) for x in n]
+
+
+def _media_movel(x: np.ndarray, janela: int) -> np.ndarray:
+    soma = np.concatenate([np.zeros((x.shape[0], 1)), np.cumsum(x, axis=1)],
+                          axis=1)
+    fim = np.arange(1, x.shape[1] + 1)
+    ini = np.maximum(0, fim - janela)
+    return (soma[:, fim] - soma[:, ini]) / (fim - ini)
+
+
+def estatistica_multicomprimento(multi: list[np.ndarray], n_multi: list[int],
+                                 janela_var: int
+                                 ) -> tuple[np.ndarray, np.ndarray]:
+    """(D, Var(D)) por janela. D com correcao de vies de segunda ordem
+    (E[log c_hat] ~ log c - v/2); variancia pela taxa media das ultimas
+    janela_var janelas, o que acompanha a deriva sem ser inflada por um
+    ataque intermitente na propria janela."""
+    D = 0.0
+    var = 0.0
+    for cnt, nm, w in zip(multi, n_multi, (1.0, -2.0, 1.0)):
+        p_hat = (cnt + 0.5) / (nm + 1.0)
+        p_mov = np.clip(_media_movel(cnt, janela_var) / nm, 0.5 / nm,
+                        0.5 - 1e-3)
+        v = _var_log_coerencia(p_mov, nm)
+        c = np.clip(1 - 2 * p_hat, 1e-3, None)
+        D = D + w * (np.log(c) + v / 2)
+        var = var + w * w * v
+    return D, var
+
+
+def cusum_multicomprimento(c: np.ndarray, n: int, inicio: int, delta: float,
+                           multi: list[np.ndarray] | None = None,
+                           n_multi: list[int] | None = None,
+                           comprimentos: list[int] | None = None,
+                           theta_proj: float | None = None,
+                           janela_var: int = 20, **_) -> np.ndarray:
+    if multi is None or n_multi is None or comprimentos is None \
+            or theta_proj is None:
+        raise ValueError("cusum_multicomprimento exige multi, n_multi, "
+                         "comprimentos e theta_proj")
+    m = np.asarray(comprimentos)
+    if len(m) != 3 or m[1] - m[0] != m[2] - m[1] or m[1] <= m[0]:
+        raise ValueError("comprimentos devem ser 3, crescentes e igualmente "
+                         "espacados")
+    mu1 = -float(np.log(np.cos(m[0] * theta_proj))
+                 - 2 * np.log(np.cos(m[1] * theta_proj))
+                 + np.log(np.cos(m[2] * theta_proj)))
+    D, var = estatistica_multicomprimento(multi, n_multi, janela_var)
+    mu0 = D[:, :inicio].mean(axis=1, keepdims=True)
+    x = -(D - mu0)
+    llr = (mu1 / var) * (x - mu1 / 2)
+    return _cusum(llr, inicio)
+
+
 DETECTORES = {
     "shewhart": shewhart,
     "cusum": cusum,
     "cusum_movel": cusum_movel,
     "cusum_diferencial": cusum_diferencial,
     "cusum_diferencial_calibrado": cusum_diferencial_calibrado,
+    "cusum_multicomprimento": cusum_multicomprimento,
 }
+
+# Detectores propostos neste trabalho (os demais sao a linha de base).
+PROPOSTOS = ("cusum_multicomprimento",)
 
 
 def calibrar_limiar(escore: np.ndarray, inicio: int, fap: float) -> float:

@@ -14,9 +14,19 @@ Criterios:
                     (nominal 5%, avaliado em replicas independentes)
   C4 sinal          algum detector detecta o ataque constante (S3) com
                     probabilidade >= 0,8 e falso alarme previo <= 5%
-  C5 lacuna         nenhum detector e robusto ao mesmo tempo a deriva
-                    comum (S1), deriva descasada (S2) e rampa lenta (S7):
-                    falso alarme <= 10% em S1 e S2 e deteccao >= 0,8 em S7
+  C5 lacuna         nenhum detector da linha de base (os da literatura:
+                    Shewhart, CUSUM, CUSUM movel, diferenciais) e robusto
+                    ao mesmo tempo a deriva comum (S1), deriva descasada
+                    (S2) e rampa lenta (S7): falso alarme <= 10% em S1 e S2
+                    e deteccao >= 0,8 em S7
+
+Informativos (nao entram no veredito):
+  C6 contribuicao   o detector proposto tem falso alarme <= 10% sob toda
+                    deriva incoerente (S1, S2, S8, S9) e deteccao >= 0,8
+                    nos ataques S3, S7 e S10 (atacante adaptativo)
+  C7 limite         falso alarme sob deriva de frequencia (S11), um
+                    deslocamento coerente de fase que nenhum canario de um
+                    eixo distingue do ataque
 
 Uso:
     PYTHONPATH=. python3 experiments/tema1_canario/viabilidade.py
@@ -30,14 +40,18 @@ import time
 
 from experiments.tema1_canario import benchmark_sequencial as bench
 from experiments.tema1_canario import piloto_binomial as piloto
+from experiments.tema1_canario.detectores import PROPOSTOS
 from experiments.tema1_canario.manifesto import manifesto
 from experiments.tema1_canario.modelo import (p1_analitico, p1_qsim_amostrado,
                                               p1_qsim_exato)
 
 
+BASE = [d for d in bench.DETECTORES if d not in PROPOSTOS]
+
+
 def c1_fisica() -> tuple[bool, str]:
     pior_dif, pior_z, seed = 0.0, 0.0, 5000
-    for k in (1, 10):
+    for k in (1, 10, 60):
         for theta in (0.0, 0.013, 0.05):
             for p in (0.0, 0.003, 0.02):
                 a = p1_analitico(theta, k, p)
@@ -86,7 +100,7 @@ def c4_sinal(t: dict) -> tuple[bool, str]:
 
 
 def c5_lacuna(t: dict) -> tuple[bool, str]:
-    robustos = [d for d in bench.DETECTORES
+    robustos = [d for d in BASE
                 if t[("S1", d)]["falso_alarme"] <= 0.10
                 and t[("S2", d)]["falso_alarme"] <= 0.10
                 and t[("S7", d)]["deteccao"] >= 0.8]
@@ -94,7 +108,7 @@ def c5_lacuna(t: dict) -> tuple[bool, str]:
         return False, ("problema ja resolvido pelos detectores avaliados: "
                        + ", ".join(robustos))
     falhas = []
-    for d in bench.DETECTORES:
+    for d in BASE:
         motivos = []
         if t[("S1", d)]["falso_alarme"] > 0.10:
             motivos.append(f"S1 FA {t[('S1', d)]['falso_alarme']:.2f}")
@@ -103,7 +117,28 @@ def c5_lacuna(t: dict) -> tuple[bool, str]:
         if t[("S7", d)]["deteccao"] < 0.8:
             motivos.append(f"S7 det {t[('S7', d)]['deteccao']:.2f}")
         falhas.append(f"{d} ({', '.join(motivos)})")
-    return True, "nenhum detector robusto: " + "; ".join(falhas)
+    return True, "nenhum detector da linha de base robusto: " + "; ".join(falhas)
+
+
+def c6_contribuicao(t: dict) -> tuple[bool, str]:
+    partes, ok = [], True
+    for d in PROPOSTOS:
+        fa = {c: t[(c, d)]["falso_alarme"] for c in ("S1", "S2", "S8", "S9")}
+        det = {c: t[(c, d)]["deteccao"] for c in ("S3", "S7", "S10")}
+        ok &= all(v <= 0.10 for v in fa.values()) and \
+            all(v >= 0.8 for v in det.values())
+        partes.append(f"{d}: FA " + ", ".join(f"{c} {v:.3f}"
+                                              for c, v in fa.items())
+                      + "; det " + ", ".join(f"{c} {v:.3f}"
+                                             for c, v in det.items()))
+    return ok, "; ".join(partes)
+
+
+def c7_limite(t: dict) -> tuple[bool, str]:
+    fa = {d: t[("S11", d)]["falso_alarme"] for d in bench.DETECTORES}
+    return all(v <= 0.10 for v in fa.values()), \
+        "falso alarme sob deriva de frequencia (S11): " + ", ".join(
+            f"{d} {v:.3f}" for d, v in fa.items())
 
 
 def main() -> int:
@@ -129,13 +164,18 @@ def main() -> int:
     ]
     for nome, (ok, detalhe) in criterios:
         print(f"[{'ok' if ok else 'FALHOU'}] {nome}: {detalhe}")
+    print("\ninformativos:")
+    for nome, (ok, detalhe) in (("C6 contribuicao", c6_contribuicao(t)),
+                                ("C7 limite", c7_limite(t))):
+        print(f"[{'sim' if ok else 'nao'}] {nome}: {detalhe}")
 
     viavel = all(ok for _, (ok, _) in criterios)
     print(f"\ntempo total {time.perf_counter() - t0:.0f} s")
     print("\nVEREDITO:", "VIAVEL" if viavel else "NAO VIAVEL NESTE ESTADO")
     if viavel:
-        print("A base experimental se sustenta e o problema central (deteccao "
-              "robusta a deriva descasada e a atacante lento) continua aberto.")
+        print("A base experimental se sustenta e a linha de base nao resolve "
+              "a deteccao robusta a deriva descasada e a atacante lento. Veja "
+              "C6 e C7 para o detector proposto e o limite que permanece.")
     else:
         print("Veja os criterios que falharam acima antes de seguir.")
     return 0 if viavel else 1

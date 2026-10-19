@@ -149,7 +149,14 @@ class ModeloCanario:
         self.janelas = janelas
         self.fonte = fonte
 
-    def p1(self, theta: float, p_fundo: float) -> float:
+    def p1(self, theta: float, p_fundo: float, janelas: int | None = None,
+           leitura: float = 0.0) -> float:
+        """P(1) medido. janelas: comprimento do canario (padrao: o do
+        modelo). leitura: erro de leitura simetrico, aplicado ao bit medido
+        (P -> e + (1 - 2e) P)."""
+        k = self.janelas if janelas is None else int(janelas)
         if self.fonte == "analitico":
-            return p1_analitico(theta, self.janelas, p_fundo)
-        return p1_qsim_exato(theta, self.janelas, p_fundo)
+            p = p1_analitico(theta, k, p_fundo)
+        else:
+            p = p1_qsim_exato(theta, k, p_fundo)
+        return leitura + (1.0 - 2.0 * leitura) * p

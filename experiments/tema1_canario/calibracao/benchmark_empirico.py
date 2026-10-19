@@ -13,6 +13,10 @@ Cenarios por distancia d:
   E3  deriva real + ataque constante theta = 0,01
   E7  deriva real + rampa lenta ate theta = 0,015
 
+Erro de leitura fixo em `leitura_nominal` (1%) nos dois canarios, como no
+benchmark sequencial; a deriva vem so de T1/T2. O canario multicomprimento
+(detector proposto) usa o mesmo qubit proximo e o mesmo total de shots.
+
 Fisica: P(1) pela formula fechada do canario, vetorizada. Antes de rodar,
 ela e conferida contra a matriz densidade do QSim em duas frentes, e
 diferenca acima de 1e-10 aborta:
@@ -55,9 +59,10 @@ ATAQUES = {
 }
 
 
-def p1_vetor(theta, p, janelas: int) -> np.ndarray:
+def p1_vetor(theta, p, janelas: int, leitura: float = 0.0) -> np.ndarray:
     r = (1.0 - 4.0 * np.asarray(p) / 3.0) ** janelas
-    return (1.0 - r * np.cos(janelas * np.asarray(theta))) / 2.0
+    p1 = (1.0 - r * np.cos(janelas * np.asarray(theta))) / 2.0
+    return leitura + (1.0 - 2.0 * leitura) * p1
 
 
 def conferir_fisica(amostras: np.ndarray, janelas: int,
@@ -81,23 +86,40 @@ def conferir_relaxacao(tau: float, janelas: int, rng: np.random.Generator,
 
 
 def _probabilidades(quad: np.ndarray, theta_w: np.ndarray, W: int,
-                    janelas: int, deriva: bool) -> tuple[np.ndarray, np.ndarray]:
+                    janelas: int, deriva: bool, cfg: dict
+                    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
     frac = np.arange(W) / max(W - 1, 1) if deriva else np.zeros(W)
     pn = quad[:, [0]] + (quad[:, [1]] - quad[:, [0]]) * frac
     pf = quad[:, [2]] + (quad[:, [3]] - quad[:, [2]]) * frac
-    return p1_vetor(theta_w[None, :], pn, janelas), p1_vetor(0.0, pf, janelas)
+    e = cfg["leitura_nominal"]
+    multi = [p1_vetor(theta_w[None, :], pn, m, e)
+             for m in cfg["comprimentos_multi"]]
+    return (p1_vetor(theta_w[None, :], pn, janelas, e),
+            p1_vetor(0.0, pf, janelas, e), multi)
 
 
-def _escores(c, f, cfg):
+def _amostrar(rng, n, pn, pf, multi, n_multi):
+    c = rng.binomial(n, pn)
+    f = rng.binomial(n, np.broadcast_to(pf, pn.shape))
+    mm = [rng.binomial(nm, np.broadcast_to(pm, pn.shape))
+          for pm, nm in zip(multi, n_multi)]
+    return c, f, mm
+
+
+def _escores(c, f, mm, cfg, aux):
     args = {"n": cfg["n_shots"], "inicio": cfg["inicio"],
             "delta": cfg["delta"], "janela_ref": cfg["janela_ref"],
-            "defasagem": cfg["defasagem"], "f": f}
+            "defasagem": cfg["defasagem"], "f": f, "multi": mm,
+            "n_multi": aux["n_multi"], "comprimentos": cfg["comprimentos_multi"],
+            "theta_proj": aux["theta_proj"],
+            "janela_var": cfg["janela_variancia"]}
     return {nome: fn(c, **args) for nome, fn in DETECTORES.items()}
 
 
 def executar(deriva_json: dict, cfg: dict = bench.CONFIG) -> dict:
     W, tau, ini, n = cfg["W"], cfg["tau"], cfg["inicio"], cfg["n_shots"]
     k = cfg["janelas_ociosas"]
+    aux = bench.auxiliares(cfg)
     R = cfg["replicas_teste"]
     seq = np.random.SeedSequence(cfg["seed_mestre"], spawn_key=(3000,))
     rng_fis, *_ = [np.random.default_rng(s) for s in seq.spawn(1)]
@@ -127,19 +149,17 @@ def executar(deriva_json: dict, cfg: dict = bench.CONFIG) -> dict:
 
         # calibracao: bases reais, sem deriva, sem ataque, replicas proprias
         qc = sortear(cfg["replicas_calibracao"])
-        pc, pfc = _probabilidades(qc, np.zeros(W), W, k, deriva=False)
-        c0 = rng.binomial(n, pc)
-        f0 = rng.binomial(n, np.broadcast_to(pfc, pc.shape))
+        pc, pfc, mc = _probabilidades(qc, np.zeros(W), W, k, False, cfg)
+        c0, f0, m0 = _amostrar(rng, n, pc, pfc, mc, aux["n_multi"])
         limiares = {d: calibrar_limiar(e, ini, cfg["fap"])
-                    for d, e in _escores(c0, f0, cfg).items()}
+                    for d, e in _escores(c0, f0, m0, cfg, aux).items()}
 
         for nome_cen, cen in ATAQUES.items():
             quad = sortear(R)
             th = theta_por_janela(cen, W, tau)
-            pn, pf = _probabilidades(quad, th, W, k, deriva=True)
-            c = rng.binomial(n, pn)
-            f = rng.binomial(n, np.broadcast_to(pf, pn.shape))
-            for det, esc in _escores(c, f, cfg).items():
+            pn, pf, pm = _probabilidades(quad, th, W, k, True, cfg)
+            c, f, mm = _amostrar(rng, n, pn, pf, pm, aux["n_multi"])
+            for det, esc in _escores(c, f, mm, cfg, aux).items():
                 alarme = primeiro_alarme(esc, limiares[det], ini)
                 linha = {"distancia": faixa, "cenario": nome_cen,
                          "detector": det, "limiar": limiares[det]}
@@ -168,7 +188,8 @@ def imprimir(res: dict) -> None:
           {k: f"{v:.1e}" for k, v in res["conferencia_fisica_max_dif"].items()})
     dets = list(DETECTORES)
     curto = {"shewhart": "shew", "cusum": "cusum", "cusum_movel": "movel",
-             "cusum_diferencial": "dif", "cusum_diferencial_calibrado": "dif_cal"}
+             "cusum_diferencial": "dif", "cusum_diferencial_calibrado": "dif_cal",
+             "cusum_multicomprimento": "multi"}
     print("\n  d    cen  " + "  ".join(f"{curto[d]:>13}" for d in dets))
     linhas = {}
     for r in res["resultados"]:

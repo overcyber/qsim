@@ -413,11 +413,59 @@ function cellClick(c, q) {
   editor.pending = [];
   pendMsg(); gridRender();
 }
+// Avaliador aritmetico proprio (descida recursiva): numeros, pi, + - * /,
+// sinais e parenteses. Nao usa Function()/eval: a Content-Security-Policy do
+// gateway (sem 'unsafe-eval') bloqueia ambos, e era isso que fazia toda porta
+// com parametro (rx, ry, rz, p, cp) cair em "Parametro invalido". Aceita
+// virgula decimal (0,5) e o simbolo π.
 function parsePi(raw) {
-  if (!/^[0-9pi+\-*/(). ]+$/.test(raw)) return null;
+  if (raw === null || raw === undefined) return null;
+  const src = String(raw).trim().toLowerCase()
+    .replace(/π/g, "pi").replace(/,/g, ".");
+  if (!src || src.length > 64 || !/^[0-9pi+\-*/(). e]+$/.test(src)) return null;
+  let i = 0;
+  const peek = () => { while (src[i] === " ") i++; return src[i]; };
+  function numero() {
+    peek();
+    if (src.startsWith("pi", i)) { i += 2; return Math.PI; }
+    const m = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/.exec(src.slice(i));
+    if (!m) throw new Error("numero esperado");
+    i += m[0].length;
+    return parseFloat(m[0]);
+  }
+  function fator() {
+    const c = peek();
+    if (c === "+") { i++; return fator(); }
+    if (c === "-") { i++; return -fator(); }
+    if (c === "(") {
+      i++;
+      const v = expr();
+      if (peek() !== ")") throw new Error(") esperado");
+      i++;
+      return v;
+    }
+    return numero();
+  }
+  function termo() {
+    let v = fator();
+    for (let c = peek(); c === "*" || c === "/"; c = peek()) {
+      i++;
+      v = c === "*" ? v * fator() : v / fator();
+    }
+    return v;
+  }
+  function expr() {
+    let v = termo();
+    for (let c = peek(); c === "+" || c === "-"; c = peek()) {
+      i++;
+      v = c === "+" ? v + termo() : v - termo();
+    }
+    return v;
+  }
   try {
-    const v = Function('"use strict"; const pi = Math.PI; return (' + raw + ')')();
-    return (typeof v === "number" && isFinite(v)) ? v : null;
+    const v = expr();
+    if (peek() !== undefined) return null;      // sobra de texto: invalido
+    return (typeof v === "number" && isFinite(v) && Math.abs(v) <= 1e6) ? v : null;
   } catch { return null; }
 }
 function editorToOperations() {

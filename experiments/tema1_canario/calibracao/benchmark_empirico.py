@@ -14,8 +14,13 @@ Cenarios por distancia d:
   E7  deriva real + rampa lenta ate theta = 0,015
 
 Fisica: P(1) pela formula fechada do canario, vetorizada. Antes de rodar,
-ela e conferida contra a matriz densidade do QSim em pontos sorteados da
-propria faixa de parametros usada; diferenca acima de 1e-10 aborta.
+ela e conferida contra a matriz densidade do QSim em duas frentes, e
+diferenca acima de 1e-10 aborta:
+  - com o depolarizante, em pontos sorteados da faixa de p usada;
+  - com o canal de relaxamento termico (T1, T2, duracao da janela), em
+    pontos de T1 e T2 sorteados, contra a conversao p_coerencia usada por
+    analisar_deriva.py. Isso valida que o ruido de fundo vindo da
+    calibracao real e o do canal fisico, nao uma aproximacao.
 
 Uso:
     PYTHONPATH=. python3 experiments/tema1_canario/calibracao/benchmark_empirico.py \\
@@ -31,11 +36,13 @@ from pathlib import Path
 import numpy as np
 
 from experiments.tema1_canario import benchmark_sequencial as bench
+from experiments.tema1_canario.calibracao.modelo_ruido import p_coerencia
 from experiments.tema1_canario.cenarios import Cenario, theta_por_janela
 from experiments.tema1_canario.detectores import (DETECTORES, calibrar_limiar,
                                                   primeiro_alarme)
 from experiments.tema1_canario.manifesto import manifesto
-from experiments.tema1_canario.modelo import p1_qsim_exato
+from experiments.tema1_canario.modelo import (p1_qsim_exato,
+                                              p1_qsim_relaxacao_exato)
 
 RESULTADOS = Path(__file__).parent.parent / "resultados"
 
@@ -61,6 +68,18 @@ def conferir_fisica(amostras: np.ndarray, janelas: int,
                      for t, p in zip(thetas, ps)))
 
 
+def conferir_relaxacao(tau: float, janelas: int, rng: np.random.Generator,
+                       pontos: int = 30) -> float:
+    """Formula com p_coerencia contra o canal T1/T2 do QSim."""
+    t1 = rng.uniform(40e-6, 400e-6, pontos)
+    t2 = t1 * rng.uniform(0.1, 2.0, pontos)
+    thetas = rng.uniform(0, 0.05, pontos)
+    return float(max(
+        abs(p1_vetor(th, p_coerencia(a, b, tau), janelas)
+            - p1_qsim_relaxacao_exato(th, janelas, a, b, tau))
+        for th, a, b in zip(thetas, t1, t2)))
+
+
 def _probabilidades(quad: np.ndarray, theta_w: np.ndarray, W: int,
                     janelas: int, deriva: bool) -> tuple[np.ndarray, np.ndarray]:
     frac = np.arange(W) / max(W - 1, 1) if deriva else np.zeros(W)
@@ -84,6 +103,14 @@ def executar(deriva_json: dict, cfg: dict = bench.CONFIG) -> dict:
     rng_fis, *_ = [np.random.default_rng(s) for s in seq.spawn(1)]
 
     resultados, conferencias = [], {}
+    params = deriva_json.get("parametros", {})
+    if params.get("modelo_ruido", "coerencia") == "coerencia" and \
+            params.get("tau_s"):
+        conferencias["relaxacao_T1_T2"] = conferir_relaxacao(
+            float(params["tau_s"]), k, rng_fis)
+        if conferencias["relaxacao_T1_T2"] > 1e-10:
+            raise RuntimeError("formula com p_coerencia diverge do canal T1/T2 "
+                               f"do QSim: {conferencias['relaxacao_T1_T2']:.2e}")
     for fi, faixa in enumerate(deriva_json["amostras_pares"]):
         amostras = np.asarray(deriva_json["amostras_pares"][faixa], dtype=float)
         if len(amostras) < 100:

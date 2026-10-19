@@ -3,12 +3,14 @@
 Entrada: o CSV e o mapa produzidos por coletar_ibm.py.
 
 Passos:
-  1. Converte T1/T2 de cada (snapshot, qubit) no depolarizante equivalente
-     por janela ociosa do canario (modelo_ruido.p_idle). A duracao da
-     janela tau e escolhida para que a mediana do chip no primeiro
-     snapshot seja p_alvo (0,002, o mesmo do benchmark); como p cresce
-     quase linearmente com tau nessa faixa, as razoes medidas abaixo
-     praticamente nao dependem dessa escolha.
+  1. Converte T1/T2 de cada (snapshot, qubit) no ruido de fundo por
+     janela ociosa do canario. Padrao: modelo_ruido.p_coerencia, exato
+     para o canario (depende so de T2); a alternativa "fidelidade" usa a
+     fidelidade media (p_idle). A duracao da janela tau e escolhida para
+     que a mediana do chip no primeiro snapshot seja p_alvo (0,002, o
+     mesmo do benchmark); como p cresce quase linearmente com tau nessa
+     faixa, as razoes medidas abaixo praticamente nao dependem dessa
+     escolha.
   2. Deriva: L_q(t) = log(p_q(t+1) / p_q(t)) entre snapshots consecutivos
      separados por no maximo `max_intervalo_h` horas.
   3. Modo comum: mediana de L sobre o chip em cada transicao; fracao da
@@ -36,8 +38,8 @@ from pathlib import Path
 
 import numpy as np
 
-from experiments.tema1_canario.calibracao.modelo_ruido import (p_idle,
-                                                               tau_para_p)
+from experiments.tema1_canario.calibracao.modelo_ruido import (
+    p_coerencia, p_idle, tau_para_p, tau_para_p_coerencia)
 from experiments.tema1_canario.manifesto import manifesto
 
 DADOS = Path(__file__).parent / "dados"
@@ -174,7 +176,10 @@ def bootstrap(L: np.ndarray, idx_faixas: dict, reps: int,
 def analisar(snaps: list[str], t1: np.ndarray, t2: np.ndarray,
              arestas: list[list[int]], p_alvo: float = 0.002,
              max_intervalo_h: float = 36.0, reps_bootstrap: int = 300,
-             amostras_max: int = 5000, seed: int = 20261019) -> dict:
+             amostras_max: int = 5000, seed: int = 20261019,
+             modelo: str = "coerencia") -> dict:
+    if modelo not in ("coerencia", "fidelidade"):
+        raise ValueError("modelo deve ser coerencia ou fidelidade")
     rng = np.random.default_rng(seed)
     S, Q = t1.shape
 
@@ -182,8 +187,12 @@ def analisar(snaps: list[str], t1: np.ndarray, t2: np.ndarray,
     s0 = next(s for s in range(S) if np.isfinite(t1[s]).sum() > Q // 2)
     t1m = float(np.nanmedian(t1[s0]))
     t2m = float(np.nanmedian(np.minimum(t2[s0], 2 * t1[s0])))
-    tau = tau_para_p(p_alvo, t1m, t2m)
-    P = p_idle(t1, t2, tau)
+    if modelo == "coerencia":
+        tau = float(tau_para_p_coerencia(p_alvo, t1m, t2m))
+        P = p_coerencia(t1, t2, tau)
+    else:
+        tau = tau_para_p(p_alvo, t1m, t2m)
+        P = p_idle(t1, t2, tau)
 
     # transicoes consecutivas dentro do intervalo maximo
     pares_t = [(s, s + 1) for s in range(S - 1)
@@ -236,6 +245,7 @@ def analisar(snaps: list[str], t1: np.ndarray, t2: np.ndarray,
 
     return {
         "parametros": {"p_alvo": p_alvo, "tau_s": tau,
+                       "modelo_ruido": modelo,
                        "max_intervalo_h": max_intervalo_h,
                        "reps_bootstrap": reps_bootstrap, "seed": seed},
         "snapshots": S, "qubits": Q, "transicoes": len(pares_t),
@@ -275,12 +285,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", required=True)
     ap.add_argument("--max-intervalo-h", type=float, default=36.0)
+    ap.add_argument("--modelo", choices=["coerencia", "fidelidade"],
+                    default="coerencia",
+                    help="conversao T1/T2 -> ruido do canario (padrao: "
+                         "coerencia, exata para o canario)")
     args = ap.parse_args()
     csv_path = DADOS / f"{args.backend}.csv"
     mapa = json.loads((DADOS / f"{args.backend}_mapa.json").read_text())
     snaps, t1, t2 = carregar(csv_path)
     res = analisar(snaps, t1, t2, mapa["arestas"],
-                   max_intervalo_h=args.max_intervalo_h)
+                   max_intervalo_h=args.max_intervalo_h, modelo=args.modelo)
     res = {"manifesto": manifesto({"backend": args.backend,
                                    "fonte_dados": str(csv_path.name)}), **res}
     imprimir(res)

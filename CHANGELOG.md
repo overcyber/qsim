@@ -1,5 +1,26 @@
 # Changelog
 
+## [Não publicado] - branch exp/tema1-canario
+
+### Adicionados
+- **Phase damping** (`phase_damping: λ`) nos três níveis do modelo de
+  ruído, no núcleo e no Aer.
+- **Relaxamento térmico por T1, T2 e duração de porta**: `t1`/`t2` no
+  nível global ou em `per_qubit`, `gate_time` no global ou em `per_gate`.
+  Convertido em amplitude damping seguido de phase damping, igual ao
+  `thermal_relaxation_error` do Qiskit (1e-12). Validação de T2 <= 2 T1 e
+  dos campos no nível certo.
+- `tests/test_noise_channels.py`: phase damping contra a fórmula, canal
+  térmico contra o do Qiskit, curvas de Ramsey e de decaimento de T1 com
+  T1/T2 diferentes por qubit nos dois motores, validação.
+- Experimento do Tema 1 (`experiments/tema1_canario/`): piloto binomial
+  versionado, benchmark sequencial com cinco detectores, critérios de
+  viabilidade e pipeline de calibração real da IBM.
+
+### Alterados
+- Backend Clifford e rota automática decidem "há ruído" pelo próprio
+  `NoiseModel`, em vez de listas de chaves que esqueciam canais novos.
+
 ## [Não publicado] - branch fix/fisica-ruido-seeds-aer
 
 ### Corrigidos

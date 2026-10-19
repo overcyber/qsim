@@ -80,6 +80,44 @@ def _p1_exato_cache(theta: float, janelas: int, p_fundo: float) -> float:
     return float(probs[1])
 
 
+def p1_relaxacao_analitico(theta: float, janelas: int, t1: float, t2: float,
+                           tau: float) -> float:
+    """P(1) com relaxamento termico em cada janela ociosa de tau segundos.
+
+    A medida em X depende so da coerencia, que decai por exp(-tau/T2) por
+    janela qualquer que seja T1.
+    """
+    return (1.0 - math.exp(-janelas * tau / t2) * math.cos(janelas * theta)) / 2.0
+
+
+@lru_cache(maxsize=4096)
+def _p1_relaxacao_cache(theta: float, janelas: int, t1: float, t2: float,
+                        tau: float) -> float:
+    from qiskit_aer import AerSimulator
+
+    from services.engine import backend_aer as ba
+
+    ops = operacoes_canario(theta, janelas)
+    native = ba.native_gates_for("density_matrix")
+    qc = ba.build_qiskit_circuit(2, ops, with_clbits=False, native=native)
+    qc.save_probabilities([0])
+    noise = NoiseModel.from_dict({"per_gate": {"id": {"gate_time": tau}},
+                                  "per_qubit": {"0": {"t1": t1, "t2": t2}}})
+    res = AerSimulator(
+        method="density_matrix", precision="double",
+        noise_model=ba.build_noise_model(noise, 2, ops, native=native),
+    ).run(qc, shots=1).result()
+    return float(res.data(0)["probabilities"][1])
+
+
+def p1_qsim_relaxacao_exato(theta: float, janelas: int, t1: float, t2: float,
+                            tau: float) -> float:
+    """P(1) exato pela matriz densidade com o canal de relaxamento termico
+    do QSim (t1, t2 no qubit do canario, gate_time na porta id)."""
+    return _p1_relaxacao_cache(round(float(theta), 12), int(janelas),
+                               float(t1), float(t2), float(tau))
+
+
 def p1_qsim_exato(theta: float, janelas: int, p_fundo: float) -> float:
     """P(1) exato pela matriz densidade com a fisica do QSim."""
     return _p1_exato_cache(round(float(theta), 12), int(janelas),

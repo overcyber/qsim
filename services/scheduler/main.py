@@ -58,7 +58,8 @@ def classify(circuit: dict) -> str:
     # noisy (CPU) so recebe registros pequenos: antes, um job de 29 qubits
     # com ruido caia na CPU independentemente da memoria necessaria.
     quantum_noise = any(
-        noise.get(k) for k in ("depolarizing", "amplitude_damping")
+        noise.get(k) for k in ("depolarizing", "amplitude_damping",
+                               "phase_damping", "t1", "t2")
     ) or any(
         v for spec in (noise.get("per_gate") or {}).values()
         for v in spec.values()

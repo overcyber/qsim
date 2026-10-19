@@ -26,7 +26,10 @@ from experiments.tema1_canario.calibracao import (analisar_deriva,
                                                   benchmark_empirico,
                                                   coletar_ibm, sintetico)
 from experiments.tema1_canario.calibracao.modelo_ruido import (
-    fidelidade_media, p_idle, tau_para_p)
+    fidelidade_media, p_coerencia, p_idle, tau_para_p, tau_para_p_coerencia)
+from experiments.tema1_canario.modelo import (p1_relaxacao_analitico,
+                                              p1_qsim_relaxacao_exato,
+                                              p1_analitico)
 from experiments.tema1_canario.detectores import (cusum_diferencial,
                                                   cusum_diferencial_calibrado)
 
@@ -52,6 +55,35 @@ def test_conversao_contra_relaxacao_termica() -> None:
     assert np.isnan(p_idle(0.0, 1e-4, 1e-7))
     print("[ok] conversao T1/T2: fidelidade media igual a do canal de "
           "relaxacao termica do Qiskit (1e-12)")
+
+
+def test_canario_sob_relaxamento_termico() -> None:
+    """O canario sob o canal T1/T2 do QSim segue exp(-k tau/T2), sem
+    depender de T1, e p_coerencia reproduz isso pela formula fechada. A
+    conversao por fidelidade media erra justamente quando T1 e T2 diferem."""
+    k, tau = 10, 400e-9
+    pior_coer, pior_fid = 0.0, 0.0
+    for t1, t2 in ((200e-6, 150e-6), (80e-6, 160e-6), (300e-6, 40e-6),
+                   (100e-6, 100e-6)):
+        for theta in (0.0, 0.02, 0.05):
+            exato = p1_qsim_relaxacao_exato(theta, k, t1, t2, tau)
+            assert abs(exato - p1_relaxacao_analitico(theta, k, t1, t2, tau)) \
+                < 1e-12
+            pior_coer = max(pior_coer, abs(
+                exato - p1_analitico(theta, k, p_coerencia(t1, t2, tau))))
+            pior_fid = max(pior_fid, abs(
+                exato - p1_analitico(theta, k, p_idle(t1, t2, tau))))
+    assert pior_coer < 1e-12, pior_coer
+    assert pior_fid > 1e-4, pior_fid
+    # T1 nao entra: mesmo T2, T1 diferente, mesmo P(1)
+    a = p1_qsim_relaxacao_exato(0.03, k, 100e-6, 90e-6, tau)
+    b = p1_qsim_relaxacao_exato(0.03, k, 400e-6, 90e-6, tau)
+    assert abs(a - b) < 1e-12
+    tau_c = tau_para_p_coerencia(0.002, 150e-6, 120e-6)
+    assert abs(p_coerencia(150e-6, 120e-6, tau_c) - 0.002) < 1e-15
+    print(f"[ok] canario sob T1/T2 do QSim: formula com p_coerencia exata "
+          f"({pior_coer:.0e}); por fidelidade media erra ate {pior_fid:.1e}; "
+          "P(1) independe de T1")
 
 
 def test_extracao_backend_simulado() -> None:
@@ -156,6 +188,7 @@ def test_benchmark_empirico_ponta_a_ponta() -> None:
     b = benchmark_empirico.executar(deriva, cfg)
     assert a["resultados"] == b["resultados"]
     assert max(a["conferencia_fisica_max_dif"].values()) < 1e-10
+    assert "relaxacao_T1_T2" in a["conferencia_fisica_max_dif"]
     print("[ok] benchmark empirico: deterministico por seed e fisica "
           "conferida contra o QSim")
 

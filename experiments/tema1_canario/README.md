@@ -33,6 +33,7 @@ sem ruído próprio; shots independentes entre si.
 | `modelo.py` | circuito do canário e P(1) por três fontes independentes |
 | `piloto_binomial.py` | reprodução versionada do piloto de 18/10/2026 |
 | `detectores.py` | Shewhart, CUSUM, CUSUM com referência móvel, CUSUM diferencial e diferencial calibrado |
+| `calibracao/modelo_ruido.py` | conversão de T1/T2 em ruído do canário |
 | `cenarios.py` | deriva de calibração, descasamento de deriva e perfis de atacante |
 | `benchmark_sequencial.py` | calibração, avaliação e métricas dos detectores |
 | `manifesto.py` | proveniência anexada a todo resultado |
@@ -149,9 +150,18 @@ de calibração de um processador real.
         PYTHONPATH=. python3 experiments/tema1_canario/calibracao/benchmark_empirico.py \
             --backend ibm_torino
 
-A conversão de T1/T2 em ruído do canário iguala a fidelidade média do
-relaxamento à do depolarizante (conferida contra o canal de relaxação
-térmica do Qiskit a 1e-12). A análise recupera o κ verdadeiro de um
+**Conversão de T1/T2.** O canário mede na base X, então só a coerência
+importa, e sob relaxamento térmico ela decai por e^(−τ/T2) por janela,
+qualquer que seja T1. A conversão usada (`p_coerencia`) escolhe o
+depolarizante com esse mesmo decaimento, e com ela a fórmula fechada do
+canário é exata: o benchmark empírico confere isso, antes de rodar,
+contra o canal de relaxamento térmico do próprio QSim (`t1`, `t2`,
+`gate_time`), com diferença máxima de 1e-12. A conversão por fidelidade
+média, usada numa versão anterior, erra P(1) em até 0,013 quando T1 e T2
+diferem, mais que o sinal de um ataque com θ = 0,02. Consequência para o
+artigo: a deriva que importa para este canário é a de T2.
+
+A análise recupera o κ verdadeiro de um
 histórico sintético em todas as distâncias
 (`tests/test_tema1_calibracao.py`). Pelo que se encontrou na literatura,
 as flutuações de T1 em processadores IBM são da ordem de 20% da média e
@@ -165,8 +175,8 @@ escala de dias. Deriva dentro do dia exige rodar canários no hardware.
 
 - Rodar a coleta em pelo menos um processador de 127 ou 133 qubits por 90
   dias e repetir o benchmark com os parâmetros medidos.
-- Acrescentar dephasing e relaxação térmica T1/T2 ao QSim e repetir o
-  benchmark com o ruído de fundo justificado fisicamente.
+- Canários que medem em Z (sensíveis a T1) ao lado do canário em X, para
+  separar deriva de T1 e de T2.
 - Atacante adaptativo contra o detector diferencial (atingir também a
   referência) e detectores com múltiplas referências.
 - Validar o canário e o modelo de injeção em hardware real.

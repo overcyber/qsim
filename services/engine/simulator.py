@@ -63,11 +63,51 @@ class JobCancelled(Exception):
 # ---------------------------------------------------------------------------
 # Modelo de ruido: global + por porta + por qubit
 # ---------------------------------------------------------------------------
+_RELAX_KEYS = ("t1", "t2", "gate_time")
+
+
+def thermal_relaxation_probs(t1: float, t2: float,
+                             tau: float) -> tuple[float, float]:
+    """(gamma, lambda) do relaxamento termico a temperatura zero.
+
+    Amplitude damping com gamma = 1 - exp(-tau/T1) seguido de phase damping
+    com lambda = 1 - exp(-2 tau/T2 + tau/T1). A composicao leva p1 a
+    p1 exp(-tau/T1) e as coerencias a exp(-tau/T2), que e o canal
+    thermal_relaxation_error do Qiskit com populacao excitada nula. T1 ou T2
+    infinitos (math.inf) dao dephasing puro ou damping puro. Exige
+    T2 <= 2 T1, o limite fisico.
+    """
+    if tau <= 0:
+        return 0.0, 0.0
+    inv_t1 = 0.0 if math.isinf(t1) else 1.0 / t1
+    inv_t2 = 0.0 if math.isinf(t2) else 1.0 / t2
+    gamma = -math.expm1(-tau * inv_t1)
+    lam = -math.expm1(-2.0 * tau * inv_t2 + tau * inv_t1)
+    return gamma, max(lam, 0.0)
+
+
 @dataclass
 class NoiseModel:
+    """Ruido global + por porta + por qubit.
+
+    Canais explicitos (probabilidades em [0, 1]): depolarizing,
+    amplitude_damping, phase_damping. Contribuicoes do mesmo canal em
+    global, per_gate e per_qubit se somam e saturam em 1.
+
+    Relaxamento termico: t1 e t2 (segundos) em global ou per_qubit e
+    gate_time (segundos) em global ou per_gate. Cada porta aplica, em cada
+    alvo, o relaxamento da sua duracao com o T1/T2 daquele qubit; o
+    resultado e composto com os canais explicitos. T1 ou T2 ausente vale
+    infinito. Ordem pos-porta: depolarizante, amplitude damping, phase
+    damping (os dois ultimos comutam).
+    """
     depolarizing: float = 0.0
     amplitude_damping: float = 0.0
+    phase_damping: float = 0.0
     readout_error: float = 0.0
+    t1: float = math.inf
+    t2: float = math.inf
+    gate_time: float = 0.0
     per_gate: dict[str, dict[str, float]] = field(default_factory=dict)
     per_qubit: dict[int, dict[str, float]] = field(default_factory=dict)
 
@@ -76,31 +116,57 @@ class NoiseModel:
         return self.quantum or self.readout_error > 0
 
     @property
+    def relaxation(self) -> bool:
+        """Ha alguma porta com duracao e algum qubit com T1 ou T2 finito."""
+        tempos = self.gate_time > 0 or any(
+            g.get("gate_time", 0.0) > 0 for g in self.per_gate.values())
+        coerencia = (not math.isinf(self.t1) or not math.isinf(self.t2)
+                     or any(k in q for q in self.per_qubit.values()
+                            for k in ("t1", "t2")))
+        return tempos and coerencia
+
+    @property
     def quantum(self) -> bool:
         """Ha canais atuando sobre o estado quantico (exigem trajetorias ou
         um motor com canais). Erro de leitura sozinho nao conta: ele e
         aplicado na amostragem e cabe no caminho exato."""
-        return (self.depolarizing > 0 or self.amplitude_damping > 0
-                or any(v > 0 for spec in self.per_gate.values()
-                       for v in spec.values())
-                or any(v > 0 for spec in self.per_qubit.values()
-                       for v in spec.values()))
+        def canais(spec: dict[str, float]) -> bool:
+            return any(v > 0 for k, v in spec.items() if k not in _RELAX_KEYS)
 
-    def probs_for(self, gate: str, qubit: int) -> tuple[float, float]:
-        """(depolarizante, amplitude_damping) efetivos para porta+qubit.
-        Contribuicoes somadas e saturadas em 1.0. O nome da porta e
-        canonicalizado: cnot e cx recebem o mesmo ruido."""
+        return (self.depolarizing > 0 or self.amplitude_damping > 0
+                or self.phase_damping > 0 or self.relaxation
+                or any(canais(spec) for spec in self.per_gate.values())
+                or any(canais(spec) for spec in self.per_qubit.values()))
+
+    def probs_for(self, gate: str, qubit: int) -> tuple[float, float, float]:
+        """(depolarizante, amplitude damping, phase damping) efetivos para
+        porta+qubit. O nome da porta e canonicalizado: cnot e cx recebem o
+        mesmo ruido."""
         dep = self.depolarizing
         damp = self.amplitude_damping
+        deph = self.phase_damping
+        tau = self.gate_time
+        t1, t2 = self.t1, self.t2
         g = self.per_gate.get(gates.canonical(gate))
         if g:
             dep += g.get("depolarizing", 0.0)
             damp += g.get("amplitude_damping", 0.0)
+            deph += g.get("phase_damping", 0.0)
+            tau = g.get("gate_time", tau)
         q = self.per_qubit.get(qubit)
         if q:
             dep += q.get("depolarizing", 0.0)
             damp += q.get("amplitude_damping", 0.0)
-        return min(dep, 1.0), min(damp, 1.0)
+            deph += q.get("phase_damping", 0.0)
+            t1 = q.get("t1", t1)
+            t2 = q.get("t2", t2)
+        dep, damp, deph = min(dep, 1.0), min(damp, 1.0), min(deph, 1.0)
+        gamma, lam = thermal_relaxation_probs(t1, t2, tau)
+        if gamma > 0:
+            damp = 1.0 - (1.0 - damp) * (1.0 - gamma)
+        if lam > 0:
+            deph = 1.0 - (1.0 - deph) * (1.0 - lam)
+        return dep, damp, deph
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "NoiseModel":
@@ -113,11 +179,32 @@ class NoiseModel:
                 raise ValueError(f"noise.{name} deve estar em [0, 1]")
             return f
 
+        def _tempo(v: Any, name: str, zero_ok: bool) -> float:
+            f = float(v)
+            if not math.isfinite(f) or f < 0 or (f == 0 and not zero_ok):
+                raise ValueError(
+                    f"noise.{name} deve ser finito e "
+                    f"{'>= 0' if zero_ok else '> 0'} (segundos)")
+            return f
+
+        def _valor(k: str, v: Any, name: str) -> float:
+            if k in ("t1", "t2"):
+                return _tempo(v, name, zero_ok=False)
+            if k == "gate_time":
+                return _tempo(v, name, zero_ok=True)
+            return _p(v, name)
+
         m = cls(
             depolarizing=_p(d.get("depolarizing", 0.0), "depolarizing"),
             amplitude_damping=_p(d.get("amplitude_damping", 0.0),
                                  "amplitude_damping"),
+            phase_damping=_p(d.get("phase_damping", 0.0), "phase_damping"),
             readout_error=_p(d.get("readout_error", 0.0), "readout_error"),
+            t1=_tempo(d["t1"], "t1", False) if d.get("t1") is not None
+            else math.inf,
+            t2=_tempo(d["t2"], "t2", False) if d.get("t2") is not None
+            else math.inf,
+            gate_time=_tempo(d.get("gate_time", 0.0), "gate_time", True),
         )
         for gate, spec in (d.get("per_gate") or {}).items():
             if not gates.is_known(str(gate)):
@@ -128,15 +215,39 @@ class NoiseModel:
                 )
             entry = m.per_gate.setdefault(gates.canonical(str(gate)), {})
             for k, v in spec.items():
-                # apelido e nome canonico no mesmo JSON se somam
-                entry[k] = min(
-                    entry.get(k, 0.0) + _p(v, f"per_gate.{gate}.{k}"), 1.0
-                )
+                if k in ("t1", "t2"):
+                    raise ValueError(
+                        f"noise.per_gate.{gate}.{k}: T1 e T2 sao do qubit; "
+                        "use per_qubit ou o valor global")
+                name = f"per_gate.{gate}.{k}"
+                if k == "gate_time":
+                    entry[k] = _valor(k, v, name)
+                else:
+                    # apelido e nome canonico no mesmo JSON se somam
+                    entry[k] = min(entry.get(k, 0.0) + _p(v, name), 1.0)
         for qubit, spec in (d.get("per_qubit") or {}).items():
-            m.per_qubit[int(qubit)] = {
-                k: _p(v, f"per_qubit.{qubit}.{k}") for k, v in spec.items()
-            }
+            q = int(qubit)
+            for k, v in spec.items():
+                if k == "gate_time":
+                    raise ValueError(
+                        f"noise.per_qubit.{qubit}.gate_time: a duracao e da "
+                        "porta; use per_gate ou o valor global")
+            m.per_qubit[q] = {k: _valor(k, v, f"per_qubit.{qubit}.{k}")
+                              for k, v in spec.items()}
+        m._validar_t2()
         return m
+
+    def _validar_t2(self) -> None:
+        """T2 <= 2 T1 em todo qubit, com os valores efetivos."""
+        pares = [("global", self.t1, self.t2)]
+        for q, spec in self.per_qubit.items():
+            pares.append((f"per_qubit.{q}", spec.get("t1", self.t1),
+                          spec.get("t2", self.t2)))
+        for nome, t1, t2 in pares:
+            if not math.isinf(t2) and t2 > 2.0 * t1 * (1 + 1e-12):
+                raise ValueError(
+                    f"noise {nome}: T2 deve ser <= 2 T1 (T2={t2:g}, "
+                    f"T1={t1:g})")
 
 
 @dataclass
@@ -436,13 +547,30 @@ class StatevectorSimulator:
         pelo reuso de trajetorias (P1.4)."""
         fired = False
         for q in targets:
-            dep, damp = noise.probs_for(gate, q)
+            dep, damp, deph = noise.probs_for(gate, q)
             if dep > 0 and self.rng.random() < dep:
                 self.apply_gate(str(self.rng.choice(["x", "y", "z"])), [q])
                 fired = True
             if damp > 0 and self.amplitude_damping(q, damp):
                 fired = True
+            if deph > 0 and self.phase_damping(q, deph):
+                fired = True
         return fired
+
+    def phase_damping(self, qubit: int, lam: float) -> bool:
+        """Desdobramento do phase damping.
+
+        Kraus: K0 = diag(1, sqrt(1-lam)) e K1 = diag(0, sqrt(lam)). O canal
+        e identico ao phase flip com probabilidade (1 - sqrt(1-lam)) / 2:
+        populacoes intactas e coerencias multiplicadas por sqrt(1-lam).
+        Esse desdobramento usa so Z sorteado, sem renormalizacao, e o ramo
+        sem evento e o circuito limpo, o que preserva o reuso de
+        trajetorias.
+        """
+        if self.rng.random() < 0.5 * (1.0 - math.sqrt(1.0 - lam)):
+            self.apply_gate("z", [qubit])
+            return True
+        return False
 
     def amplitude_damping(self, qubit: int, gamma: float) -> bool:
         """Desdobramento em saltos quanticos do amplitude damping.
@@ -585,7 +713,8 @@ def _trajectory_plan(circuit: dict) -> tuple[list[dict], list[dict], NoiseModel]
             break
         if noise.enabled:
             for q in op["targets"]:
-                if noise.probs_for(str(op.get("gate")), int(q)) != (0.0, 0.0):
+                if any(v > 0 for v in noise.probs_for(str(op.get("gate")),
+                                                    int(q))):
                     # o ruido POS-PORTA desta porta e estocastico: a porta
                     # fica no resto (prefixo so porta cujo pos-ruido e zero —
                     # caso contrario o evento da fronteira se perde)
@@ -761,11 +890,8 @@ def run_circuit(circuit: dict[str, Any],
     # tableau O(n^2) — o statevector seria inviavel ou desnecessariamente caro.
     if backend_req == "auto" and int(circuit.get("num_qubits", 0)) > 20:
         from .clifford import is_clifford_circuit, run_clifford
-        noise = circuit.get("noise") or {}
         if (is_clifford_circuit(circuit.get("operations", []))
-                and not any(noise.get(k) for k in
-                            ("depolarizing", "amplitude_damping", "readout_error"))
-                and not noise.get("per_gate") and not noise.get("per_qubit")
+                and not NoiseModel.from_dict(circuit.get("noise")).enabled
                 and not (circuit.get("return_statevector")
                          or circuit.get("return_bloch")
                          or circuit.get("return_entanglement")

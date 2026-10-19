@@ -86,14 +86,17 @@ interferência.
 
 O modelo de ruído opera por trajetórias estocásticas (método de Monte Carlo
 quântico): cada shot evolui uma cópia independente do estado com erros
-sorteados. Três canais estão disponíveis, combináveis em três níveis:
+sorteados. Quatro canais estão disponíveis, mais o relaxamento térmico
+descrito por T1, T2 e duração de porta, combináveis em três níveis:
 
     "noise": {
       "depolarizing": 0.001,
       "amplitude_damping": 0.0005,
+      "phase_damping": 0.0002,
       "readout_error": 0.01,
-      "per_gate":  { "cx": { "depolarizing": 0.01 } },
-      "per_qubit": { "3":  { "depolarizing": 0.005 } }
+      "t1": 150e-6, "t2": 100e-6, "gate_time": 35e-9,
+      "per_gate":  { "cx": { "depolarizing": 0.01, "gate_time": 300e-9 } },
+      "per_qubit": { "3":  { "depolarizing": 0.005, "t1": 60e-6 } }
     }
 
 O nível global aplica-se a toda porta; `per_gate` modela o fato experimental
@@ -112,6 +115,20 @@ Semântica exata dos canais, igual no núcleo e no Aer (a suíte
   anteriores a esta correção implementavam, no núcleo Python, um canal de
   reset (coerências caindo por 1−γ). Resultados com amplitude damping
   obtidos com `backend` numpy, cupy ou auto antes dela devem ser refeitos.
+- `phase_damping: λ` usa K0 = diag(1, √(1−λ)) e K1 = diag(0, √λ):
+  populações intactas e coerências multiplicadas por √(1−λ). No núcleo o
+  canal é desdobrado como um Z sorteado com probabilidade (1−√(1−λ))/2, que
+  é o mesmo canal. No Aer, `phase_damping_error(λ)`.
+- Relaxamento térmico: `t1` e `t2` (segundos) são propriedades do qubit e
+  vão no nível global ou em `per_qubit`; `gate_time` (segundos) é da porta
+  e vai no nível global ou em `per_gate`. Depois de cada porta, cada alvo
+  sofre amplitude damping com γ = 1 − e^(−τ/T1) e phase damping com
+  λ = 1 − e^(−2τ/T2 + τ/T1), o que leva p1 a p1·e^(−τ/T1) e as coerências a
+  e^(−τ/T2). É o `thermal_relaxation_error` do Qiskit com população
+  excitada nula (conferido a 1e-12). T1 ou T2 ausente vale infinito; T2
+  acima de 2 T1 é rejeitado; sem `gate_time` não há relaxamento. O
+  resultado compõe-se com os canais explícitos. Ordem pós-porta:
+  depolarizante, amplitude damping, phase damping.
 - Portas de 2 e 3 qubits recebem canais de 1 qubit independentes em cada
   alvo, não um depolarizante de 2 qubits com 15 Paulis.
 - `readout_error: r` inverte cada bit medido com probabilidade r. Sozinho,

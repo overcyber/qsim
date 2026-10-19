@@ -121,21 +121,26 @@ def build_qiskit_circuit(n: int, ops: list[dict], with_clbits: bool,
 # ---------------------------------------------------------------------------
 # Mapeamento do modelo de ruido do QSim para o NoiseModel do Aer
 # ---------------------------------------------------------------------------
-def _channel_1q(dep: float, damp: float):
+def _channel_1q(dep: float, damp: float, deph: float = 0.0):
     """Canal de 1 qubit equivalente ao do nucleo Python.
 
     Nosso depolarizante aplica X, Y ou Z com prob p/3 cada (nunca I). Isso
     e o depolarizing_error do Aer com parametro lambda = 4p/3, que o Aer
-    aceita ate 4/3 (p = 1). Em seguida vem o amplitude damping, na mesma
-    ordem do nucleo.
+    aceita ate 4/3 (p = 1). Em seguida vem o amplitude damping e o phase
+    damping, na mesma ordem do nucleo. O relaxamento termico ja chega aqui
+    convertido nesses dois (NoiseModel.probs_for).
     """
-    from qiskit_aer.noise import amplitude_damping_error, depolarizing_error
+    from qiskit_aer.noise import (amplitude_damping_error, depolarizing_error,
+                                  phase_damping_error)
     error = None
     if dep > 0:
         error = depolarizing_error(4.0 * dep / 3.0, 1)
     if damp > 0:
         ad = amplitude_damping_error(damp)
         error = ad if error is None else error.compose(ad)
+    if deph > 0:
+        pd = phase_damping_error(deph)
+        error = pd if error is None else error.compose(pd)
     return error
 
 

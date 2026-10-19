@@ -333,10 +333,8 @@ def run_clifford(circuit: dict, should_cancel=None, max_qubits: int = 2048):
             )
     if circuit.get("observables"):
         raise ValueError("backend clifford nao suporta observaveis")
-    noise = circuit.get("noise") or {}
-    if any(noise.get(k) for k in ("depolarizing", "amplitude_damping",
-                                  "readout_error")) or \
-            noise.get("per_gate") or noise.get("per_qubit"):
+    from .simulator import NoiseModel
+    if NoiseModel.from_dict(circuit.get("noise")).enabled:
         raise ValueError("backend clifford nao suporta ruido")
 
     rng = np.random.default_rng(seed)

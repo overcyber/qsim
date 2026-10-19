@@ -12,3 +12,5 @@ __pycache__/
 
 # logs gravados pelos servicos
 logs/
+.venv/
+.venv/

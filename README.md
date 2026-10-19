@@ -80,6 +80,10 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
     docs/EXECUCAO_PLANO.md     o que foi executado do plano, validações e KPIs medidos
     docs/TESTES_PRATICOS.md    receitas prontas de experimentos (console, curl, SDK)
                                com saídas reais medidas e como interpretá-las
+    docs/LINHAS_DE_PESQUISA.md como usar o QSim para pesquisa científica:
+                               3 experimentos validados com oráculo (decoerência
+                               GHZ, VQE-TFIM, código de repetição) + 8 linhas
+                               correlatas; exemplos executáveis em examples/
     CHANGELOG.md               histórico de mudanças
     requirements-gpu.txt       dependencias opcionais: cupy-cuda12x, cuquantum (Volta+), numba
 

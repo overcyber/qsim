@@ -20,7 +20,11 @@ probabilidade de falso alarme fixa no horizonte (calibrar_limiar).
   cusum_diferencial CUSUM condicional: dado t = c + f, c ~ Bin(t, q) com
                     q = p_prox / (p_prox + p_ref). Sem ataque q = 1/2 em
                     qualquer nivel de deriva comum; com ataque q > 1/2.
-                    Nao usa base estimada.
+                    Nao usa base estimada; supoe bases iguais.
+  cusum_diferencial_calibrado
+                    o mesmo, com a razao de base entre os canarios
+                    estimada na calibracao (qubits reais tem bases
+                    diferentes; sem isso o diferencial dispara sem ataque).
 """
 from __future__ import annotations
 
@@ -86,11 +90,32 @@ def cusum_diferencial(c: np.ndarray, n: int, inicio: int, delta: float,
     return _cusum(llr, inicio)
 
 
+def cusum_diferencial_calibrado(c: np.ndarray, n: int, inicio: int,
+                                delta: float, f: np.ndarray,
+                                **_) -> np.ndarray:
+    """CUSUM diferencial com a razao de base estimada na calibracao.
+
+    Qubits diferentes tem ruido de base diferente (T1 e T2 variam pelo
+    chip), entao sem ataque q = p_prox / (p_prox + p_ref) nao e 1/2. q0 e
+    estimado nas janelas 0..inicio-1; sob ataque, a razao de chances
+    p_prox / p_ref cresce pelo fator (1 + delta).
+    """
+    soma_c = c[:, :inicio].sum(axis=1)
+    soma_f = f[:, :inicio].sum(axis=1)
+    q0 = np.clip((soma_c + 0.5) / (soma_c + soma_f + 1.0), _EPS, 1 - _EPS)
+    r1 = q0 / (1 - q0) * (1 + delta)
+    q1 = r1 / (1 + r1)
+    q0, q1 = q0[:, None], q1[:, None]
+    llr = c * np.log(q1 / q0) + f * np.log((1 - q1) / (1 - q0))
+    return _cusum(llr, inicio)
+
+
 DETECTORES = {
     "shewhart": shewhart,
     "cusum": cusum,
     "cusum_movel": cusum_movel,
     "cusum_diferencial": cusum_diferencial,
+    "cusum_diferencial_calibrado": cusum_diferencial_calibrado,
 }
 
 

@@ -9,3 +9,6 @@ docker-compose.test-override.yml
 
 __pycache__/
 *.pyc
+
+# logs gravados pelos servicos
+logs/

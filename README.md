@@ -65,12 +65,16 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
     PYTHONPATH=. python3 tests/integration_e2e.py     # ponta a ponta (requer nats-server)
     PYTHONPATH=. python3 tests/test_gpu.py            # validacao GPU/custatevec/numba (na maquina com as placas)
     PYTHONPATH=. python3 tests/test_backend_aer.py    # motor C++ Aer com paridade de recursos
+    PYTHONPATH=. python3 tests/test_noise_channels.py # canais vs formulas analiticas e paridade entre motores
     k6 run tests/load/k6_gateway.js                   # carga no gateway
 
 ## Documentação
 
     docs/PLANEJAMENTO.md       arquitetura, decisões, fases (1-4 entregues, 5 futura)
     docs/PESQUISA.md           guia de uso para pesquisa (web, SDK, receitas, exports)
+    docs/LINHAS_DE_PESQUISA.md como sair de uma pergunta cientifica e chegar a um
+                               experimento; linhas relacionadas, correlatas e distintas;
+                               experimentos A a E com saidas reais (scripts em examples/)
     docs/PLANO_DE_MELHORIA.md  avaliação profunda, comparativo com outros simuladores
                                e plano de melhoria em fases (P0-P4) com critérios de aceite
     docs/EXECUCAO_PLANO.md     o que foi executado do plano, validações e KPIs medidos
@@ -82,4 +86,6 @@ porta/por qubit, cancelamento em `POST /api/jobs/{id}/cancel` e exportação em
 Backends: `numpy` (referência), `cupy` (GPU, kernels in-place até 31 qubits
 na VRAM), `custatevec` (Volta+), `aer`/`aer-gpu` (motor C++), `clifford`
 (tableau O(n²) — milhares de qubits em circuitos Clifford, com auto-rota
-acima de 20 qubits) e `auto`.
+acima de 20 qubits) e `auto`, que escolhe o motor instalado conforme o circuito
+(ruído vai para o Aer; exato prefere aer-gpu, cupy, aer, numpy) e grava a
+escolha em `metadata.backend_resolved`.

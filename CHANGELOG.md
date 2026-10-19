@@ -1,5 +1,63 @@
 # Changelog
 
+## [Não publicado] - branch fix/fisica-ruido-seeds-aer
+
+### Corrigidos
+- **Amplitude damping no núcleo Python era um canal de reset.** Com
+  probabilidade gamma o qubit era medido e levado a |0>: as populações
+  coincidiam, mas as coerências decaíam por (1-gamma) em vez de
+  sqrt(1-gamma). Medido antes da correção: |+> com gamma = 0,5 dava
+  P(0) = 0,751 contra 0,854 analítico (40 sigma). Agora é um desdobramento
+  em saltos quânticos dos operadores de Kraus, compatível com o reuso de
+  trajetórias do P1.4. Resultados com amplitude damping em numpy, cupy ou
+  auto obtidos antes desta versão devem ser refeitos.
+- **Aer ignorava ruído em `rzz`, `rxx` e `id`** e falhava com os apelidos
+  `cnot`, `toffoli`, `fredkin`, `phase`, `i` e com `iswap`. O ruído agora é
+  registrado por instância (porta canônica, qargs) presente no circuito;
+  portas sem instrução nativa no método do Aer vão como unitary rotulado
+  (ex.: `cswap` no método density_matrix). `per_qubit` com portas de 3
+  qubits passou a funcionar no Aer.
+- **A mesma seed dava contagens diferentes conforme o número de núcleos**
+  e entre os modos paralelo e sequencial. Cada bloco de 256 shots recebe
+  agora um filho de `SeedSequence(seed)`; a distribuição dos blocos entre
+  processos não altera o resultado.
+- **`per_gate` com porta desconhecida era ignorado em silêncio**; agora é
+  rejeitado. Apelidos e nome canônico são equivalentes no `per_gate`.
+- **Roteamento**: job com ruído em registro grande caía na classe `noisy`
+  (CPU). Agora só registros pequenos vão para `noisy`; erro de leitura
+  sozinho não conta como ruído.
+- **Documentação**: o estado W tem entropia 0,918 por qubit, não 1, e a
+  porta `ch` sugerida não existe; receitas de W e de teleporte corrigidas.
+
+### Alterados
+- **`backend: "auto"`** resolve para o melhor motor instalado e registra
+  `backend_requested`/`backend_resolved` nos metadados: ruído ou medição
+  intermediária vão para aer-gpu, aer ou numpy; circuitos exatos para
+  aer-gpu, cupy, aer ou numpy. Clifford puro acima de 20 qubits continua
+  indo para o tableau.
+- **Aer com ruído usa matriz densidade até 12 qubits** (uma evolução do
+  canal; medido 14x a 28x mais rápido que trajetórias de 2 a 10 qubits) e
+  shot branching acima disso.
+- **Erro de leitura sozinho roda no caminho exato** (antes forçava
+  trajetórias).
+- `tests/test_trajectories.py`: a implementação de referência passa a usar
+  o canal corrigido.
+
+### Adicionados
+- `tests/test_noise_channels.py`: cada canal contra a fórmula analítica nos
+  dois motores, todos os 29 nomes de porta com ruído nos dois motores,
+  `per_qubit` com porta de 3 qubits, seed independente de workers,
+  resolução do `auto` e roteamento do scheduler. Incluída no CI.
+- `examples/pesquisa_d_bb84_interceptacao.py` e
+  `examples/pesquisa_e_teletransporte.py`, com opção `--local`.
+- `docs/LINHAS_DE_PESQUISA.md` reestruturado: como transformar uma pergunta
+  em experimento e mapa de linhas relacionadas, correlatas e distintas.
+
+### Limitação conhecida
+- Jobs executados no Aer só verificam cancelamento antes e depois da
+  execução; com `auto`, o job pesado do teste ponta a ponta termina como
+  `done` em vez de `cancelled`.
+
 ## [Não publicado] — branch melhorias-p0-p2 (2º lote: P1.2, P1.4 e follow-up P1.1)
 
 ### Alterados

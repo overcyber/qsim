@@ -101,6 +101,29 @@ de portas de dois qubits serem uma ordem de grandeza piores que as de um
 qubit; `per_qubit` modela qubits fisicamente defeituosos. As contribuições
 somam-se (saturando em 1), permitindo compor perfis realistas de hardware.
 
+Semântica exata dos canais, igual no núcleo e no Aer (a suíte
+`tests/test_noise_channels.py` confere cada um contra a fórmula analítica):
+
+- `depolarizing: p` aplica X, Y ou Z com probabilidade p/3 cada, depois de
+  cada porta, em cada qubit alvo. Um qubit em |0⟩ é invertido com
+  probabilidade 2p/3. No Aer isso corresponde a `depolarizing_error(4p/3)`.
+- `amplitude_damping: γ` usa os operadores de Kraus padrão: a população de
+  |1⟩ cai para (1−γ) e as coerências são multiplicadas por √(1−γ). Versões
+  anteriores a esta correção implementavam, no núcleo Python, um canal de
+  reset (coerências caindo por 1−γ). Resultados com amplitude damping
+  obtidos com `backend` numpy, cupy ou auto antes dela devem ser refeitos.
+- Portas de 2 e 3 qubits recebem canais de 1 qubit independentes em cada
+  alvo, não um depolarizante de 2 qubits com 15 Paulis.
+- `readout_error: r` inverte cada bit medido com probabilidade r. Sozinho,
+  ele não exige trajetórias: o estado é exato e só a amostragem é afetada.
+- Apelidos de porta são equivalentes: `per_gate` com `cnot` vale para `cx`
+  e vice-versa (também `toffoli`/`ccx`, `fredkin`/`cswap`, `phase`/`p`,
+  `i`/`id`). Porta desconhecida em `per_gate` é rejeitada.
+- Para modelar um canal (transmissão, memória, tempo ocioso) sem tocar nas
+  portas lógicas, insira uma porta `id` no ponto desejado e coloque ruído só
+  nela com `"per_gate": {"id": {...}}`. Os exemplos D e E de
+  `docs/LINHAS_DE_PESQUISA.md` usam esse recurso.
+
 O fluxo típico na interface é executar o mesmo circuito duas vezes — uma sem
 ruído (teórico) e outra com ruído (empírico) — e abrir os dois no painel
 **Comparador**, que sobrepõe os histogramas e calcula a distância de variação
@@ -141,12 +164,42 @@ máximo com o restante do registro.
 Neumann S da partição qubit-versus-resto, em bits, exibida como barra por
 qubit. S = 0 para estados produto; S = 1 para emaranhamento máximo.
 
-Experimento clássico: compare GHZ e W de 3 qubits. Ambos exibem S = 1 por
-qubit... mas respondem diferente à perda de um qubit — meça um qubit do GHZ
-(`measure q[0]`) e observe as entropias dos remanescentes colapsarem a zero,
-enquanto no estado W sobrevive emaranhamento. O estado W pode ser preparado
-com rotações: ry(1.9106332362490186) em q0 seguida de ch/cx (ou cole a
-preparação por amplitudes que preferir).
+Experimento clássico: compare GHZ e W de 3 qubits, as duas classes de
+emaranhamento tripartido que não se convertem uma na outra por operações
+locais. Valores conferidos no simulador:
+
+| Estado | S por qubit | ⟨X₁X₂⟩ | ⟨Z₁Z₂⟩ |
+|---|---|---|---|
+| GHZ | 1,000 | 0 | 1 |
+| W | 0,918 | 2/3 | −1/3 |
+
+O W tem entropia menor por qubit (o estado reduzido de um qubit tem
+autovalores 2/3 e 1/3), mas guarda emaranhamento entre pares. Ao descartar
+o qubit 0, o par restante do GHZ fica numa mistura clássica de |00⟩ e |11⟩
+(⟨X₁X₂⟩ = 0, nenhuma coerência), enquanto o do W mantém ⟨X₁X₂⟩ = 2/3. Use
+os observáveis `IXX` e `IZZ` (o caractere j atua no qubit j). A entropia só
+é calculada no modo exato, por isso o experimento usa observáveis em vez de
+medir o qubit 0.
+
+Preparação do W só com portas do QSim (cole na aba QASM):
+
+    OPENQASM 3;
+    qubit[3] q;
+    ry(1.9106332362490186) q[0];
+    ry(pi/4) q[1];
+    cx q[0], q[1];
+    ry(-pi/4) q[1];
+    cx q[0], q[1];
+    cx q[1], q[0];
+    x q[0];
+    x q[1];
+    ccx q[0], q[1], q[2];
+    x q[0];
+    x q[1];
+
+O ângulo é 2·arccos(1/√3); as três portas seguintes formam um RY(π/2)
+controlado por q0. A versão anterior deste guia dizia que o W tinha S = 1 e
+sugeria uma porta `ch` que não existe no QSim.
 
 ### 2.5 Observáveis e tomografia parcial
 
@@ -165,9 +218,15 @@ retornados.
 
 ### 2.6 Estatística de medição e reprodutibilidade
 
-Todo job aceita `seed`; com a mesma seed, mesmo circuito e mesma precisão, o
-resultado é bit a bit reprodutível — requisito para publicação. Sem seed, o
-gerador é semeado pelo sistema. Para estudar flutuação estatística, execute o
+Todo job aceita `seed`; com a mesma seed, mesmo circuito, mesma precisão e
+mesmo motor, o resultado é bit a bit reprodutível, requisito para
+publicação. No modo de trajetórias, cada bloco de 256 shots recebe um filho
+de `SeedSequence(seed)`, então o resultado não depende do número de núcleos
+nem do modo paralelo (antes desta correção, a mesma seed dava contagens
+diferentes em máquinas com números de núcleos diferentes). Motores
+diferentes usam geradores diferentes: a seed reproduz dentro de um motor,
+não entre motores; registre `metadata.backend_resolved` junto com a seed.
+Sem seed, o gerador é semeado pelo sistema. Para estudar flutuação estatística, execute o
 mesmo circuito com shots crescentes (100, 1k, 10k, 100k) e observe a TVD
 contra a distribuição exata (aba Comparador) cair com 1/sqrt(shots).
 
@@ -186,12 +245,28 @@ submetendo o mesmo circuito com `backend` e `precision` diferentes.
 ### 2.8 Escolha do motor de execução
 
 O campo Motor do console (ou "backend" no JSON) escolhe onde o circuito
-roda: "aer" usa o motor C++ do Qiskit Aer (padrão recomendado para
-produção; "aer-gpu" com qiskit-aer-gpu instalado), "cupy" e "custatevec"
-usam as GPUs via QSim, e "numpy" executa o núcleo Python de referência.
+roda: "aer" usa o motor C++ do Qiskit Aer ("aer-gpu" com qiskit-aer-gpu
+instalado), "cupy" e "custatevec" usam as GPUs via QSim, "clifford" usa o
+tableau de estabilizadores e "numpy" executa o núcleo Python de referência.
+
+O padrão "auto" escolhe entre os motores instalados e grava a escolha em
+`metadata.backend_resolved`:
+
+- circuito Clifford puro acima de 20 qubits, sem ruído: clifford;
+- com ruído quântico ou medição intermediária: aer-gpu, aer, numpy (nessa
+  ordem de preferência). Até 12 qubits o Aer usa matriz densidade, uma
+  única evolução do canal em vez de trajetórias;
+- exato: aer-gpu, cupy (que usa cuStateVec em GPUs Volta ou mais novas),
+  aer, numpy.
+
+Limitação: a execução dentro do Aer é atômica, então o cancelamento só é
+verificado antes e depois dela. Para jobs longos que você pode querer
+interromper, escolha cupy ou numpy explicitamente.
+
 Rodar o mesmo circuito em dois motores e comparar no painel Comparador é em
-si um experimento de validação cruzada; a suíte tests/test_backend_aer.py
-automatiza isso e confirma fidelidade 1,0 entre Aer e núcleo.
+si um experimento de validação cruzada; as suítes `tests/test_backend_aer.py`
+e `tests/test_noise_channels.py` automatizam isso, inclusive para todos os
+canais de ruído e todos os nomes de porta.
 
 ## 3. SDK Python para varreduras de parâmetros
 

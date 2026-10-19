@@ -24,15 +24,29 @@ requer qiskit-aer-gpu). Instalacao: pip install qiskit qiskit-aer.
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 from typing import Any, Callable
 
 import numpy as np
 
-GATE_SET_1Q = {"h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx"}
+from . import gates
+
+GATE_SET_1Q = {"h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "id"}
 GATE_SET_1Q_P = {"rx", "ry", "rz", "p", "u"}
 GATE_SET_2Q = {"cx", "cz", "swap"}
-GATE_SET_2Q_P = {"cp"}
+GATE_SET_2Q_P = {"cp", "rxx", "rzz"}
 GATE_SET_3Q = {"ccx", "cswap"}
+
+# Portas com instrucao nativa no Aer (chamadas como metodo do
+# QuantumCircuit). Qualquer outra porta do QSim (ex.: iswap) e enviada
+# como UnitaryGate com a matriz do proprio QSim e rotulo igual ao nome
+# canonico; o rotulo e o que o NoiseModel do Aer usa para casar ruido.
+AER_NATIVE = (GATE_SET_1Q | GATE_SET_1Q_P | GATE_SET_2Q | GATE_SET_2Q_P
+              | GATE_SET_3Q)
+
+# Ate este tamanho, circuitos com canais rodam por matriz densidade
+# (uma evolucao + amostragem, sem trajetorias): 4^12 * 16 B = 256 MiB.
+DENSITY_MATRIX_MAX_QUBITS = 12
 
 
 def _require_aer():
@@ -47,6 +61,7 @@ def _require_aer():
         )
 
 
+@lru_cache(maxsize=1)
 def aer_available() -> bool:
     try:
         _require_aer()
@@ -55,6 +70,7 @@ def aer_available() -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
 def aer_gpu_available() -> bool:
     try:
         _, AerSimulator = _require_aer()
@@ -66,8 +82,13 @@ def aer_gpu_available() -> bool:
 # ---------------------------------------------------------------------------
 # Construcao do circuito Qiskit a partir do JSON do QSim
 # ---------------------------------------------------------------------------
-def build_qiskit_circuit(n: int, ops: list[dict], with_clbits: bool):
+def build_qiskit_circuit(n: int, ops: list[dict], with_clbits: bool,
+                         native: frozenset[str] | set[str] | None = None):
+    """Traduz o circuito do QSim. `native` limita as portas enviadas como
+    instrucao nativa as suportadas pelo metodo do Aer em uso; as demais
+    vao como unitary rotulado (mesma matriz do QSim, mesmo ruido)."""
     QuantumCircuit, _ = _require_aer()
+    native = AER_NATIVE if native is None else native
     qc = QuantumCircuit(n, n) if with_clbits else QuantumCircuit(n)
     for op in ops:
         kind = op.get("op", "gate")
@@ -82,13 +103,18 @@ def build_qiskit_circuit(n: int, ops: list[dict], with_clbits: bool):
             for q in op["targets"]:
                 qc.reset(int(q))
             continue
-        gate = op["gate"].lower()
+        name = gates.canonical(op["gate"])
         targets = [int(q) for q in op["targets"]]
         params = op.get("params") or []
-        method = getattr(qc, gate, None)
-        if method is None:
-            raise ValueError(f"Porta '{gate}' sem equivalente no Aer")
-        method(*params, *targets)
+        if name in native:
+            getattr(qc, name)(*params, *targets)
+            continue
+        mat, nq = gates.resolve(name, params)
+        if nq != len(targets):
+            raise ValueError(f"Porta '{name}' atua em {nq} qubit(s)")
+        # Na matriz do QSim, targets[0] e o eixo mais significativo; no
+        # Qiskit, qubits[0] e o menos significativo. Por isso a inversao.
+        qc.unitary(mat, list(reversed(targets)), label=name)
     return qc
 
 
@@ -98,69 +124,60 @@ def build_qiskit_circuit(n: int, ops: list[dict], with_clbits: bool):
 def _channel_1q(dep: float, damp: float):
     """Canal de 1 qubit equivalente ao do nucleo Python.
 
-    Nosso depolarizante aplica X/Y/Z com prob p/3 cada (nunca I), que e o
-    depolarizing_error do Aer com parametro 4p/3 (clampado em 1).
+    Nosso depolarizante aplica X, Y ou Z com prob p/3 cada (nunca I). Isso
+    e o depolarizing_error do Aer com parametro lambda = 4p/3, que o Aer
+    aceita ate 4/3 (p = 1). Em seguida vem o amplitude damping, na mesma
+    ordem do nucleo.
     """
     from qiskit_aer.noise import amplitude_damping_error, depolarizing_error
     error = None
     if dep > 0:
-        error = depolarizing_error(min(4.0 * dep / 3.0, 1.0), 1)
+        error = depolarizing_error(4.0 * dep / 3.0, 1)
     if damp > 0:
         ad = amplitude_damping_error(damp)
         error = ad if error is None else error.compose(ad)
     return error
 
 
-def build_noise_model(noise, n: int):
-    """noise: instancia de simulator.NoiseModel ja validada."""
-    from qiskit_aer.noise import NoiseModel, ReadoutError
-    model = NoiseModel(basis_gates=sorted(
-        GATE_SET_1Q | GATE_SET_1Q_P | GATE_SET_2Q | GATE_SET_2Q_P
-        | GATE_SET_3Q
-    ))
-    gates_1q = sorted(GATE_SET_1Q | GATE_SET_1Q_P)
-    gates_2q = sorted(GATE_SET_2Q | GATE_SET_2Q_P)
-    gates_3q = sorted(GATE_SET_3Q)
-    has_per_qubit = bool(noise.per_qubit)
+def build_noise_model(noise, n: int, ops: list[dict],
+                      native: frozenset[str] | set[str] | None = None):
+    """Traduz o NoiseModel do QSim para o do Aer.
 
-    # Portas de 1 qubit: canal proprio por (porta, qubit)
-    for g in gates_1q:
-        for q in range(n):
-            err = _channel_1q(*noise.probs_for(g, q))
-            if err is not None:
-                model.add_quantum_error(err, g, [q])
+    O ruido e registrado por instancia (porta canonica, qubits) que aparece
+    no circuito, com o canal de 1 qubit de cada alvo em tensor, exatamente
+    como o nucleo aplica. Assim valem global, per_gate e per_qubit para
+    qualquer porta e qualquer aridade, inclusive apelidos e portas enviadas
+    como unitary (iswap). A versao anterior so registrava uma lista fixa de
+    portas: rzz, rxx e id ficavam sem ruido no Aer em silencio, e per_qubit
+    com portas de 3 qubits era recusado.
+    """
+    from qiskit_aer.noise import NoiseModel, ReadoutError, depolarizing_error
+    native = AER_NATIVE if native is None else native
+    model = NoiseModel(basis_gates=sorted(AER_NATIVE | {"unitary"}))
+    identity = depolarizing_error(0.0, 1)
 
-    # Portas de 2 qubits: canais independentes em cada qubit envolvido
-    # (mesma semantica do nucleo Python). Com per_qubit, registra por par.
-    for g in gates_2q:
-        if not has_per_qubit:
-            err = _channel_1q(*noise.probs_for(g, 0))
-            if err is not None:
-                model.add_all_qubit_quantum_error(err.tensor(err), g)
-        else:
-            for q0 in range(n):
-                for q1 in range(n):
-                    if q0 == q1:
-                        continue
-                    e0 = _channel_1q(*noise.probs_for(g, q0))
-                    e1 = _channel_1q(*noise.probs_for(g, q1))
-                    if e0 is None and e1 is None:
-                        continue
-                    from qiskit_aer.noise import depolarizing_error
-                    ident = depolarizing_error(0.0, 1)
-                    e0 = e0 or ident
-                    e1 = e1 or ident
-                    # ordem dos qubits do erro segue [q0, q1]
-                    model.add_quantum_error(e1.tensor(e0), g, [q0, q1])
-
-    # Portas de 3 qubits: apenas ruido uniforme (global/per_gate);
-    # per_qubit em portas de 3 qubits nao e mapeavel de forma exata aqui.
-    for g in gates_3q:
-        if has_per_qubit:
+    seen: set[tuple[str, tuple[int, ...]]] = set()
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op", "gate") != "gate":
             continue
-        err = _channel_1q(*noise.probs_for(g, 0))
-        if err is not None:
-            model.add_all_qubit_quantum_error(err.tensor(err).tensor(err), g)
+        name = gates.canonical(op["gate"])
+        targets = [int(q) for q in op["targets"]]
+        # O Aer casa ruido local pela tupla exata de qargs da instrucao.
+        # Portas enviadas como unitary tem os alvos invertidos (ver
+        # build_qiskit_circuit), entao o registro segue a mesma ordem.
+        qargs = tuple(targets if name in native else reversed(targets))
+        if (name, qargs) in seen:
+            continue
+        seen.add((name, qargs))
+        channels = [_channel_1q(*noise.probs_for(name, q)) for q in qargs]
+        if all(c is None for c in channels):
+            continue
+        # qubit i do erro corresponde a qargs[i]; tensor coloca o
+        # operando da direita no qubit de menor indice
+        error = channels[0] or identity
+        for c in channels[1:]:
+            error = (c or identity).tensor(error)
+        model.add_quantum_error(error, name, list(qargs))
 
     if noise.readout_error > 0:
         p = noise.readout_error
@@ -172,16 +189,41 @@ def build_noise_model(noise, n: int):
 # ---------------------------------------------------------------------------
 # Execucao
 # ---------------------------------------------------------------------------
-def _make_backend(device_gpu: bool, precision: str, noise_model=None):
+@lru_cache(maxsize=4)
+def native_gates_for(method: str) -> frozenset[str]:
+    """Portas do QSim com instrucao nativa no metodo do Aer (o metodo
+    density_matrix, por exemplo, nao aceita cswap)."""
+    _, AerSimulator = _require_aer()
+    basis = set(AerSimulator(method=method).configuration().basis_gates)
+    return frozenset(AER_NATIVE & basis)
+
+
+def aer_method_for(n: int, noisy: bool) -> str:
+    return ("density_matrix" if noisy and n <= DENSITY_MATRIX_MAX_QUBITS
+            else "statevector")
+
+
+def _make_backend(device_gpu: bool, precision: str, noise_model=None,
+                  n: int = 0):
+    """Instancia o AerSimulator.
+
+    Sem ruido: statevector. Com ruido: matriz densidade ate
+    DENSITY_MATRIX_MAX_QUBITS (uma unica evolucao do canal, medido 14x a
+    28x mais rapido que trajetorias para 2 a 10 qubits); acima disso,
+    statevector com shot branching, que compartilha o estado entre shots
+    ate o primeiro evento estocastico.
+    """
     _, AerSimulator = _require_aer()
     kwargs: dict[str, Any] = {
-        "method": "statevector" if noise_model is None else "density_matrix"
-        if False else "statevector",
+        "method": "statevector",
         "precision": "single" if precision in ("complex64", "c64")
         else "double",
     }
     if noise_model is not None:
         kwargs["noise_model"] = noise_model
+        kwargs["method"] = aer_method_for(n, True)
+        if kwargs["method"] == "statevector":
+            kwargs["shot_branching_enable"] = True
     if device_gpu:
         if not aer_gpu_available():
             raise RuntimeError(
@@ -209,10 +251,13 @@ def aer_counts(n: int, ops: list[dict], shots: int, seed: int | None,
     Semantica do nucleo QSim: medicoes intermediarias colapsam o estado e
     a amostragem final mede TODOS os qubits. Por isso o registro inteiro e
     medido ao final (sobrescrevendo os clbits intermediarios)."""
-    qc = build_qiskit_circuit(n, ops, with_clbits=True)
+    native = native_gates_for(aer_method_for(n, noise.enabled))
+    qc = build_qiskit_circuit(n, ops, with_clbits=True, native=native)
     qc.measure(range(n), range(n))
-    noise_model = build_noise_model(noise, n) if noise.enabled else None
-    backend = _make_backend(device_gpu, precision, noise_model=noise_model)
+    noise_model = (build_noise_model(noise, n, ops, native=native)
+                   if noise.enabled else None)
+    backend = _make_backend(device_gpu, precision, noise_model=noise_model,
+                            n=n)
     job = backend.run(qc, shots=shots,
                       seed_simulator=seed if seed is not None else None)
     raw = job.result().get_counts()
@@ -256,14 +301,7 @@ def run_aer(circuit: dict[str, Any],
     # ------------------------------------------------------------------
     # Caminho empirico: ruido ou medicao intermediaria -> shots no Aer
     # ------------------------------------------------------------------
-    if noise.enabled or has_mid:
-        if noise.per_qubit and any(
-            (o.get("gate") or "").lower() in GATE_SET_3Q for o in ops
-        ):
-            raise ValueError(
-                "noise.per_qubit com portas de 3 qubits nao e suportado no "
-                "backend aer; use backend numpy (trajetorias) para esse caso"
-            )
+    if noise.quantum or has_mid:
         counts = aer_counts(n, ops, shots, seed, precision, device_gpu,
                             noise)
         if cancel():
@@ -273,6 +311,8 @@ def run_aer(circuit: dict[str, Any],
             elapsed_ms=(time.perf_counter() - t0) * 1000,
             metadata={
                 "mode": "aer_sampling", "engine": "aer",
+                "backend": "aer-gpu" if device_gpu else "aer",
+                "aer_method": aer_method_for(n, noise.enabled),
                 "device": "GPU" if device_gpu else "CPU",
                 "precision": precision,
                 "noise_channel_note": (
@@ -293,7 +333,11 @@ def run_aer(circuit: dict[str, Any],
                                 backend="numpy")
     host.state = sv.astype(DTYPES[precision])
 
-    result = SimResult(counts=host.sample(shots), shots=shots, num_qubits=n)
+    # Erro de leitura sozinho: aplicado na amostragem a partir do estado
+    # exato, igual ao nucleo (observaveis e probabilities seguem ideais).
+    result = SimResult(counts=host.sample(shots,
+                                          readout_error=noise.readout_error),
+                       shots=shots, num_qubits=n)
     result.probabilities = _prob_summary(host)
     if want_sv and n <= STATEVECTOR_MAX_QUBITS:
         result.statevector = [[float(a.real), float(a.imag)] for a in sv]
@@ -310,6 +354,7 @@ def run_aer(circuit: dict[str, Any],
 
     meta: dict[str, Any] = {
         "mode": "exact", "engine": "aer",
+        "backend": "aer-gpu" if device_gpu else "aer",
         "device": "GPU" if device_gpu else "CPU",
         "precision": precision, "original_ops": len(ops),
     }

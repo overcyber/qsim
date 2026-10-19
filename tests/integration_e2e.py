@@ -133,7 +133,10 @@ async def main() -> None:
         })
         job = await wait_result(client, r.json()["job_id"])
         assert job["status"] == "done"
-        assert job["result"]["metadata"]["mode"] == "trajectories"
+        # backend "auto" resolve para o Aer quando instalado (canais
+        # nativos); sem Aer, o nucleo roda trajetorias
+        assert job["result"]["metadata"]["mode"] in (
+            "trajectories", "aer_sampling"), job["result"]["metadata"]
         r = await client.get(f"{BASE}/api/history?limit=10", headers=HEADERS)
         assert any(j["label"] == "e2e-ruido" for j in r.json())
         print("[e2e] classe noisy + historico SQLite OK")

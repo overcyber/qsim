@@ -135,6 +135,42 @@ PARAMETRIC = {
 }
 
 
+# Apelidos aceitos na entrada e o nome canonico correspondente. O nome
+# canonico e o unico usado internamente para casar ruido por porta e para
+# traduzir o circuito para outros motores (Aer), garantindo que o mesmo
+# JSON produza a mesma fisica em qualquer backend.
+ALIASES = {
+    "cnot": "cx",
+    "toffoli": "ccx",
+    "fredkin": "cswap",
+    "phase": "p",
+    "i": "id",
+}
+
+
+def canonical(name: str) -> str:
+    """Nome canonico de uma porta (minusculo, apelidos resolvidos)."""
+    key = str(name).lower()
+    return ALIASES.get(key, key)
+
+
+def is_known(name: str) -> bool:
+    key = canonical(name)
+    return key in FIXED or key in PARAMETRIC
+
+
+def canonical_names(num_qubits: int | None = None) -> list[str]:
+    """Nomes canonicos registrados, opcionalmente filtrados por aridade."""
+    out = []
+    for key, (_, nq) in FIXED.items():
+        if key not in ALIASES and (num_qubits is None or nq == num_qubits):
+            out.append(key)
+    for key, (_, nq, _) in PARAMETRIC.items():
+        if key not in ALIASES and (num_qubits is None or nq == num_qubits):
+            out.append(key)
+    return sorted(out)
+
+
 def resolve(name: str, params: list[float] | None) -> tuple[np.ndarray, int]:
     """Retorna (matriz, n_qubits) para a porta pedida.
 

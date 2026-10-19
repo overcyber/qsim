@@ -14,8 +14,13 @@
   térmico contra o do Qiskit, curvas de Ramsey e de decaimento de T1 com
   T1/T2 diferentes por qubit nos dois motores, validação.
 - Experimento do Tema 1 (`experiments/tema1_canario/`): piloto binomial
-  versionado, benchmark sequencial com cinco detectores, critérios de
-  viabilidade e pipeline de calibração real da IBM.
+  versionado, benchmark sequencial, critérios de viabilidade e pipeline de
+  calibração real da IBM.
+- Tema 1: detector proposto `cusum_multicomprimento` (segunda diferença
+  da log-coerência em canários de 0, 30 e 60 janelas, invariante a erro
+  de leitura e decoerência), cenários de deriva de leitura, atacante
+  adaptativo e deriva de frequência, e controle com canário longo na
+  linha de base.
 
 ### Alterados
 - Backend Clifford e rota automática decidem "há ruído" pelo próprio

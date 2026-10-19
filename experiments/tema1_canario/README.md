@@ -32,9 +32,9 @@ sem ruído próprio; shots independentes entre si.
 |---|---|
 | `modelo.py` | circuito do canário e P(1) por três fontes independentes |
 | `piloto_binomial.py` | reprodução versionada do piloto de 18/10/2026 |
-| `detectores.py` | Shewhart, CUSUM, CUSUM com referência móvel, CUSUM diferencial e diferencial calibrado |
+| `detectores.py` | linha de base (Shewhart, CUSUM, CUSUM móvel, diferenciais) e o detector proposto, multicomprimento |
 | `calibracao/modelo_ruido.py` | conversão de T1/T2 em ruído do canário |
-| `cenarios.py` | deriva de calibração, descasamento de deriva e perfis de atacante |
+| `cenarios.py` | deriva de ruído, de leitura e de frequência, descasamento e perfis de atacante |
 | `benchmark_sequencial.py` | calibração, avaliação e métricas dos detectores |
 | `manifesto.py` | proveniência anexada a todo resultado |
 | `viabilidade.py` | critérios C1 a C5 de viabilidade do artigo |
@@ -57,7 +57,7 @@ referências são geradas com a árvore limpa e commitadas em seguida. Cada
 JSON traz um manifesto com commit, branch, estado da árvore, versões de
 Python, numpy, qiskit e qiskit-aer, plataforma e SHA-256 dos arquivos do
 experimento e do motor. As referências atuais foram geradas no commit
-`ccce473`, com qiskit-aer 0.17.2 e numpy 2.5.4.
+`b290a4a`, com qiskit-aer 0.17.2 e numpy 2.5.4.
 
 **Critério de verificação.** O piloto reproduz bit a bit com o mesmo
 motor e a mesma versão do qiskit-aer; em outro ambiente, exige amostras a
@@ -85,46 +85,95 @@ discretização, o falso alarme real do teste exato é 0,75%, não 1% (empírico
 
 500 shots por janela, 300 janelas, ataque a partir da janela 100, base
 calibrada nas janelas 0 a 49, limiares calibrados para 5% de falso alarme
-no horizonte em 4000 réplicas independentes das 4000 de avaliação.
+no horizonte em 4000 réplicas independentes das 4000 de avaliação. Erro de
+leitura de 1% em todos os canários. Detectores de base com canário de 10
+janelas; o multicomprimento usa 0, 30 e 60 janelas com
+56, 262 e 182 shots (o mesmo total de 500).
 
 Falso alarme sem ataque:
 
-| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Diferencial calibrado |
-|---|---|---|---|---|---|
-| S0 estacionário | 0,049 | 0,043 | 0,051 | 0,045 | 0,047 |
-| S1 deriva comum de 50% | 0,476 | 0,998 | 0,255 | 0,059 | 0,063 |
-| S2 deriva descasada (κ = 0,5) | 0,481 | 0,997 | 0,255 | 0,883 | 0,396 |
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Dif. calibrado | Multicomprimento |
+|---|---|---|---|---|---|---|
+| S0 estacionário | 0,051 | 0,044 | 0,042 | 0,050 | 0,044 | 0,051 |
+| S1 deriva comum de 50% | 0,309 | 0,942 | 0,149 | 0,056 | 0,049 | 0,042 |
+| S2 deriva descasada (κ = 0,5) | 0,309 | 0,948 | 0,143 | 0,593 | 0,286 | 0,048 |
+| S8 leitura do próximo de 1% a 1,5% | 0,207 | 0,790 | 0,110 | 0,956 | 0,540 | 0,048 |
+| S9 ruído e leitura do próximo +100% | 1,000 | 1,000 | 0,645 | 1,000 | 1,000 | 0,053 |
+| S11 deriva de frequência até 0,01 rad | 0,091 | 0,260 | 0,072 | 0,292 | 0,170 | 0,902 |
 
 Detecção com ataque (atraso mediano em janelas):
 
-| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Diferencial calibrado |
-|---|---|---|---|---|---|
-| S3 constante θ = 0,01 | 0,218 (91) | 0,825 (56) | 0,312 (24) | 0,957 (63) | 0,586 (89) |
-| S4 constante θ = 0,01 com deriva | 0,817 (100) | 0,951 (23) | 0,598 (23) | 0,872 (68) | 0,469 (85) |
-| S5 rampa até θ = 0,03 com deriva | 0,979 (99) | 0,954 (52) | 0,966 (89) | 0,997 (97) | 1,000 (117) |
-| S6 intermitente θ = 0,03 | 0,991 (1) | 0,997 (3) | 0,995 (2) | 0,995 (4) | 0,994 (24) |
-| S7 rampa lenta até θ = 0,015 | 0,249 (165) | 0,928 (158) | 0,290 (152) | 0,956 (157) | 0,592 (170) |
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Dif. calibrado | Multicomprimento |
+|---|---|---|---|---|---|---|
+| S3 constante θ = 0,01 | 0,150 (98) | 0,569 (64) | 0,147 (24) | 0,689 (84) | 0,390 (85) | 0,991 (9) |
+| S4 constante com deriva | 0,586 (116) | 0,956 (34) | 0,297 (26) | 0,595 (85) | 0,324 (83) | 0,988 (10) |
+| S5 rampa até 0,03 com deriva | 0,982 (119) | 0,961 (65) | 0,973 (119) | 0,994 (108) | 0,997 (125) | 0,991 (69) |
+| S6 intermitente θ = 0,03 | 0,992 (2) | 0,995 (3) | 0,994 (3) | 0,994 (6) | 0,944 (31) | 0,991 (0) |
+| S7 rampa lenta até 0,015 | 0,158 (157) | 0,716 (167) | 0,145 (142) | 0,720 (169) | 0,415 (172) | 0,992 (122) |
+| S10 adaptativo (atinge a referência) | 0,145 (101) | 0,562 (64) | 0,158 (25) | 0,050 (93) | 0,047 (91) | 0,990 (8) |
 
-Sob deriva, a detecção bruta se confunde com o falso alarme da própria
-deriva. A detecção atribuível ao ataque em S4 (S4 menos o alarme pós-τ de
-S1) é:
-Shewhart 0,372, CUSUM 0,007, CUSUM móvel 0,379, diferencial 0,817, diferencial calibrado 0,407.
+**Controle de comprimento.** O canário multicomprimento usa circuitos
+mais longos, e o sinal coerente cresce com o quadrado do comprimento.
+Repetindo a linha de base com canário de 30 janelas (`--janelas 30`; a
+coluna do multicomprimento muda porque o ponto de projeto acompanha o
+comprimento de referência):
+
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Dif. calibrado | Multicomprimento |
+|---|---|---|---|---|---|---|
+| S1 deriva comum de 50% | 0,821 | 1,000 | 0,227 | 0,051 | 0,048 | 0,046 |
+| S2 deriva descasada (κ = 0,5) | 0,816 | 1,000 | 0,214 | 0,951 | 0,608 | 0,042 |
+| S8 leitura do próximo de 1% a 1,5% | 0,117 | 0,372 | 0,072 | 0,498 | 0,283 | 0,049 |
+| S9 ruído e leitura do próximo +100% | 1,000 | 1,000 | 0,717 | 1,000 | 1,000 | 0,041 |
+| S11 deriva de frequência até 0,01 rad | 0,890 | 1,000 | 0,336 | 1,000 | 1,000 | 0,980 |
+
+| Cenário | Shewhart | CUSUM | CUSUM móvel | Diferencial | Dif. calibrado | Multicomprimento |
+|---|---|---|---|---|---|---|
+| S3 constante θ = 0,01 | 0,992 | 0,992 | 0,990 | 0,991 | 0,992 | 0,997 |
+| S7 rampa lenta até 0,015 | 0,989 | 0,992 | 0,992 | 0,993 | 0,994 | 0,999 |
+| S10 adaptativo (atinge a referência) | 0,992 | 0,992 | 0,992 | 0,041 | 0,051 | 0,996 |
 
 ### Leitura
 
-1. Detectores com base fixa não servem sob deriva de calibração: o CUSUM
-   dispara em 99,8% das réplicas sem nenhum ataque, e sua detecção
-   atribuível em S4 é praticamente nula.
-2. A referência móvel tolera parte da deriva, mas um atacante que cresce
-   devagar a treina: em S7 ela detecta 29%, contra 96% do diferencial.
-3. O canário diferencial resolve deriva comum e atacante lento, mas cai
-   quando os qubits derivam de forma diferente (88% de falso alarme em S2).
-   Medir o descasamento real de deriva entre qubits vizinhos e distantes, e
-   construir um detector robusto a ele, é o problema central do artigo.
-4. O diferencial original supõe que os dois canários têm a mesma base de
-   ruído, o que não vale entre qubits reais. A versão calibrada estima a
-   razão de base e reduz o falso alarme sob deriva descasada (40% contra
-   88%), ao custo de poder contra a rampa lenta (59% contra 96%).
+1. Detectores com base fixa não servem sob deriva: o CUSUM dispara em 94%
+   das réplicas sem ataque com deriva comum de 50%.
+2. A referência móvel tolera parte da deriva, mas uma rampa lenta a
+   treina (S7: 15%).
+3. Os diferenciais resolvem a deriva comum, mas caem quando os qubits
+   derivam de forma diferente (S2, S8, S9) e ficam cegos a um atacante que
+   atinge também a referência (S10: 5%).
+4. A vantagem de poder do multicomprimento com canário de 10 janelas vem
+   do circuito mais longo: com 30 janelas, toda a linha de base chega a
+   0,99 em S3 e S7. O que só ele entrega é robustez. É o único com falso
+   alarme de até 5% sob toda deriva incoerente (S1, S2, S8, S9) e, entre
+   os que toleram deriva comum, o único que detecta o atacante adaptativo
+   (S10). Shewhart e CUSUM também detectam S10, mas porque S10 não tem
+   deriva.
+5. Limite: uma deriva de frequência (S11) é um deslocamento coerente de
+   fase, fisicamente igual ao ataque. O multicomprimento dispara em 90% das
+   réplicas e a linha de base também se degrada, mais ainda com canário
+   longo. Separar ataque de dessintonia e de ZZ legítimo de vizinhos é o
+   problema aberto que sobra para o artigo.
+
+### Detector proposto: canário multicomprimento
+
+A coerência medida do canário de m janelas é c_m = 1 − 2P_m =
+A·r^m·cos(mθ), com A dado pelo erro de leitura e r pela decoerência. Logo
+log c_m = log A + m·log r + log cos(mθ): a parte de ruído é afim em m. Com
+três comprimentos igualmente espaçados (0, L, 2L), a segunda diferença
+
+    D = log c_0 − 2 log c_L + log c_2L = log cos(2Lθ) − 2 log cos(Lθ) ≈ −L²θ²
+
+não depende de A nem de r, qualquer que seja a deriva dos dois, e não usa
+qubit de referência. O detector é um CUSUM gaussiano sobre −D, com
+variância e viés de segunda ordem estimados nas últimas 20 janelas (a
+variância da própria janela é inflada por um ataque intermitente). A
+identidade é conferida contra a matriz densidade do QSim, com erro de
+leitura, a 1e-12 (`tests/test_tema1_canario.py`).
+
+No benchmark empírico com histórico sintético (deriva real por qubit,
+bases heterogêneas), o multicomprimento teve falso alarme entre 4,3% e
+4,9% e detecção entre 0,91 e 0,95 em todas as distâncias no chip, contra
+0,48 a 0,51 do diferencial calibrado com 14% a 18% de falso alarme.
 
 ## Calibração real da IBM
 
@@ -174,9 +223,15 @@ escala de dias. Deriva dentro do dia exige rodar canários no hardware.
 ## Limitações e próximos passos
 
 - Rodar a coleta em pelo menos um processador de 127 ou 133 qubits por 90
-  dias e repetir o benchmark com os parâmetros medidos.
-- Canários que medem em Z (sensíveis a T1) ao lado do canário em X, para
-  separar deriva de T1 e de T2.
-- Atacante adaptativo contra o detector diferencial (atingir também a
-  referência) e detectores com múltiplas referências.
+  dias e repetir o benchmark empírico com os parâmetros medidos, incluindo
+  a deriva do erro de leitura, que o CSV já registra.
+- Deriva de frequência e ZZ legítimo de vizinhos (S11): medir em quadratura
+  (base Y), onde o ataque tem sinal linear em θ com sinal definido, e
+  canários com eco de Hahn, que cancelam dessintonia estática. Modelar a
+  ocupação dos vizinhos por outros usuários.
+- Atacante que conhece o protocolo: fase aleatória por shot (crosstalk
+  incoerente, sem assinatura quadrática) e ataques sincronizados com os
+  comprimentos do canário.
+- Custo: o canário multicomprimento ocupa mais tempo de máquina por janela
+  (circuitos de até 60 janelas ociosas).
 - Validar o canário e o modelo de injeção em hardware real.
